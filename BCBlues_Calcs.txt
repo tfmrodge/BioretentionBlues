@@ -1,0 +1,33 @@
+# Bioretention Blues model calculations
+# Model definition, curent arguments are chemsum, locsum (CSVs) calctype = FW/BW, numchems, res (results)
+#Created by Tim Rodgers 20180424
+def BCBlues(chemsum,locsum,calctype,numchems,res):
+
+#Set up the compartment parameters
+
+#Calculate D values
+
+#Calculate total D values DT
+#0 - Air
+DT(0) = D12+D13+D17+Dst+DA(0)+DR(0) #Dst = upward advection to stratosphere...perhaps not here aha
+#1 - PondingZone
+DT(1) = D21+D23+D27+D25+DA(1)+DR(1)
+#2 - Schmutzdecke
+DT(2) = D31+D32+D34+D35+D36+DR(2)
+#3 - Filter Zone
+DT(3) = D43+D45+D46+DBur+DR(3) #DBur = burial
+#4 - Pore Water
+DT(4) = D53+D54+D56+DA(4)+DR(4)
+#5 - Rhizosphere
+DT(5) = D63+D64+D65+D67+DR(5)
+#6 - Vegetation
+DT(6) = D71+D72+D73+D76+DA(6)+Dr(6)
+
+#Define the D value matrix A using numpy package, loaded as np. #Should I solve all chems at once?
+A = np.array([[-DT(0),D21,D31,0,0,0,D71],[D12,-DT(1),D32,0,0,0,D72],[D13,D23,-DT(2),D43,D43,0,D73],
+[0,0,D34,-DT(3),D54,D64,0],[0,D25,D35,D45,-DT(4),D65,0],[0,0,D36,D46,D56,-DT(5),D76],[D17,D27,0,0,0,D67,-DT(6)]])
+#Set up the RHS solution vector E
+For i in range (0,6)
+	E(i) = GCB(i) #This will probably be passed from another thing? All time variant? Shit
+#Solve the matrix using numpy linalg
+fug = np.linalg.solve(A,E)
