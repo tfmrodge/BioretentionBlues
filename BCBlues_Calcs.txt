@@ -1,16 +1,17 @@
 # Bioretention Blues model calculations
 # Model definition, curent arguments are chemsum, locsum (CSVs) calctype = FW/BW, numchems, res (results)
 #Created by Tim Rodgers 20180424 
-#last updated 180519
-
+#last updated 180529
 
 def BCBlues(chemsum,BCsum,calctype,numchems,res):
 
-#Calculate Z-Values for chemical i. ZB(j) is the bulk Z value for compartment j
+#Declare constants
+
+#Calculate Z-Values for chemical chem. ZB(j) is the bulk Z value for compartment j
 
 #0 - Air
 Z(0) = 1/(R*T(0)) #Air
-	Z(1) = 1/HLC(i) # Water
+	Z(1) = 1/HLC(chem) # Water
 	#Calculate the volume fraction of water in suspended particles. From Arp et al. 2008
 	GFx = [0.12,0.28,0.77,0.92]
 	GFy = [1,1.08,1.43,2.2]
@@ -18,20 +19,29 @@ Z(0) = 1/(R*T(0)) #Air
 	VFQw = (GF - 1) * Dens(1) / ((GF - 1) * Dens(1) + Dens(8))
 	VFQp = 1-VFQw
 	#8 Aerosol - water and organic matrix
-	ZQA= Z(0) *dens(8)*KQA(i)*VFQp(0)+Z(1)*VFQw(1) 
+	ZQA= Z(0) *dens(8)*KQA(chem)*VFQp(0)+Z(1)*VFQw(1) 
 	#0 - Bulk Air
 	ZBulk(0) = Z(0)+ZQA*VFAerosol
 	AirPartFrac = (ZQA*VFAerosol)/Zbulk(0)
 	
-#1 Water
-#9 Water suspended solids
-ZSS = Kocwater(i)*Z(1)*fOC(9)*Dens(9)/1000 #suspended solids
+#1 - Water
+ZSS = Kocwater(chem)*Z(1)*fOC(9)*Dens(9)/1000 #suspended solids
 	ZBulk(1) = Z(1)+ZSS*VFSS
-#2 Schmutzdecke
-ZBulk(2) = z(1) * 
-	
-#3 
-	
+#2 - Schmutzdecke
+Z(2)= Kocwater(chem) * Z(1)*fOC(2)*Dens(2)/1000 #Mulch Solids - should this be Kocair? Suspended solids for particle capture/filter cake, calculated and variable probably
+	ZBulk(2) = Z(0)*VFAirMulch+Z(1)* VFWaterMulch + ZSS*VFSSMulch+Z(2) * (1-VFAirMulch-VFWaterMulch-VFSSMulch)
+#3 - Filter Zone (water is not at equilibrium)
+Z(3) = Kocwater(chem) * Z(1)*fOC(3)*Dens(3)/1000 #filter Zone Soil Solids
+	ZBulk(3) = Z(0)*VFAirSoil + Z(3)*(1-VFPoreSoil) #VFPoreSoil constant, VFAirSoil function of water content (theta)
+#4 - Pore Water
+ZBulk(4) = Z(1) #Just water
+#5 - Rhizosphere
+ZBulk(5) = Z(0)*VFAirSoil+Z(1)*VFWaterRhizo+Z(3)*(1-VFAirSoil-VFWaterRhizo)
+#6 - Roots
+Zplant = z(1) * Kslwater * FrnOC(6) #Plant storage lipids
+	ZBulk(6) = Z(0)*VFAirRoot + Z(1) * VFWaterRoot + Zplant * (1-VFAirRoot-VFWaterRoot)
+#7 - Shoots
+ZBulk(7) = Z(0)*VFAirShoot + Z(1) * VFWaterShoot + Zplant * (1-VFAirShoot-VFWaterShoot)
 
 #Calculate D values
 
