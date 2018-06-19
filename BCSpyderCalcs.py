@@ -1,0 +1,73 @@
+# Bioretention Blues model calculations
+# Model definition, curent arguments are chemsum, locsum (CSVs) calctype = FW/BW, numchems, res (results)
+#Created by Tim Rodgers 20180424 
+#last updated 180529
+
+def BCBlues(chemsum,BCsum,calctype,numchems,res):
+
+#Declare constants
+
+#Calculate Z-Values for chemical chem. ZB(j) is the bulk Z value for compartment j
+
+#0 - Air
+Z(0) = 1/(R*T(0)) #Air
+Z(1) = 1/HLC(chem) # Water
+#Calculate the volume fraction of water in suspended particles. From Arp et al. 2008
+	GFx = [0.12,0.28,0.77,0.92]
+	GFy = [1,1.08,1.43,2.2]
+	GF = np.interp(RH,GFx,GFy)
+	VFQw = (GF - 1) * Dens(1) / ((GF - 1) * Dens(1) + Dens(8))
+	VFQp = 1-VFQw
+	#8 Aerosol - water and organic matrix
+	ZQA= Z(0) *dens(8)*KQA(chem)*VFQp(0)+Z(1)*VFQw(1) 
+	#0 - Bulk Air
+	ZBulk(0) = Z(0)+ZQA*VFAerosol
+	AirPartFrac = (ZQA*VFAerosol)/Zbulk(0)
+	
+#1 - Water
+ZSS = Kocwater(chem)*Z(1)*fOC(9)*Dens(9)/1000 #suspended solids
+	ZBulk(1) = Z(1)+ZSS*VFSS
+#2 - Schmutzdecke
+Z(2)= Kocwater(chem) * Z(1)*fOC(2)*Dens(2)/1000 #Mulch Solids - should this be Kocair? Suspended solids for particle capture/filter cake, calculated and variable probably
+	ZBulk(2) = Z(0)*VFAirMulch+Z(1)* VFWaterMulch + ZSS*VFSSMulch+Z(2) * (1-VFAirMulch-VFWaterMulch-VFSSMulch)
+#3 - Filter Zone (water is not at equilibrium)
+Z(3) = Kocwater(chem) * Z(1)*fOC(3)*Dens(3)/1000 #filter Zone Soil Solids
+	ZBulk(3) = Z(0)*VFAirSoil + Z(3)*(1-VFPoreSoil) #VFPoreSoil constant, VFAirSoil function of water content (theta)
+#4 - Pore Water
+ZBulk(4) = Z(1) #Just water
+#5 - Rhizosphere
+ZBulk(5) = Z(0)*VFAirSoil+Z(1)*VFWaterRhizo+Z(3)*(1-VFAirSoil-VFWaterRhizo)
+#6 - Roots
+Zplant = z(1) * Kslwater * FrnOC(6) #Plant storage lipids
+	ZBulk(6) = Z(0)*VFAirRoot + Z(1) * VFWaterRoot + Zplant * (1-VFAirRoot-VFWaterRoot)
+#7 - Shoots
+ZBulk(7) = Z(0)*VFAirShoot + Z(1) * VFWaterShoot + Zplant * (1-VFAirShoot-VFWaterShoot)
+
+#Calculate D values
+
+#Calculate total D values DT
+#0 - Air
+DT(0) = D01+D02+D07+Dst+DA(0)+DR(0) #Dst = upward advection to stratosphere...perhaps not here aha
+#1 - PondingZone
+	DT(1) = D10+D12+D15+D17+DA(1)+DR(1)
+#2 - Schmutzdecke
+	DT(2) = D20+D21+D23+D24+DR(2)
+#3 - Filter Zone
+	DT(3) = D32+D34+D35+DBur+DR(3) #DBur = burial
+#4 - Pore Water
+	DT(4) = D41+D43+D45+DA(4)+Dinf+DR(4)+DA(4) #Dinf = infiltration
+#5 - Rhizosphere
+	DT(5) = D53+D54+D56+DR(5)
+#6 - Vegetation Roots
+	DT(6) = D65+D67+DR(6)
+#7 - Vegetation Shoots
+	DT(7) = D70+D71+D76+DR(7)+DG #DG = Growth dilution
+
+#Define the D value matrix A using numpy package, loaded as np. #Should I solve all chems at once?
+A = np.array([[-DT(0),D10,D20,0,0,0,0,D70],[D01,-DT(1),D21,0,0,D51,0,D71],[D02,D12,-DT(2),D32,D42,0,0,0],
+	[0,0,D23,-DT(3),D43,D53,0,0],[0,D14,0,D34,-DT(4),D54,0,0],[0,0,0,D35,D45,-DT(5),D65,0],[0,0,0,0,0,D56,-DT(6),D76],[D07,D17,0,0,0,0,D67,-DT(7)]])
+#Set up the RHS solution vector E
+For i in range (0,6)
+		E(i) = GCB(i) #influent from CSV most likely
+#Solve the matrix using numpy linalg
+fug = np.linalg.solve(A,E)
