@@ -35,7 +35,7 @@ class BioretentionCellBlues:
         #Declare constants
         R = 8.314 #Ideal gas constant, J/mol/K
         #Initialize results
-        res = chemsumm.loc[:,'Compound']
+        res = pd.DataFrame(chemsumm.iloc[:, 0])
         #Calculate chemical-independent parameters
         bcsumm.loc[:,'V']= bcsumm.Area*bcsumm.Depth #Add volumes  m³
         bcsumm.loc[0,'Density'] = 0.029 * 101325 / (R * bcsumm.Temp[0]) #Air density kg/m^3
@@ -46,5 +46,4 @@ class BioretentionCellBlues:
         #Calculate Z-Values for chemical chem ZB(j) is the bulk Z value for compartment j
         #0 - Air
         bcsumm.loc[0,'Zbulk']=1/(R*bcsumm.Temp[0])
-        res.append(chemsumm.MolMass)
         return res
