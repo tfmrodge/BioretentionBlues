@@ -5,50 +5,30 @@ Created on Tue Jun 19 14:14:25 2018
 @author: Tim Rodgers
 """
 
+import numpy as np
+import pylab
+from scipy.optimize import curve_fit
 
-#x = BioretentionCellBlues(bcsumm,chemsumm)
-#y = x.steady_state(bcsumm,chemsumm)
+def sigmoid(x, x0, k):
+     y = 1 / (1 + np.exp(-k*(x-x0)))
+     return y
 
-import pandas as pd
+xdata = np.array([0,0.0229999999999961,0.141999999999996,0.283999999999992,0.424999999999983,0.567000000000007,0.709000000000003,0.849999999999994,0.99199999999999,1.13399999999999,1.27599999999998])
+ydata = np.array([0,0.0831035223026541,1.0627710716992,4.65730750197914,10.4155082554683,17.5850932537215,20.9764530863231,22.196163673915,22.4347725324083,22.5260271318681,22.5387871318681])
+ydata1 = ydata/ydata[-1]
 
-class BioretentionCellBlues:
-    """ Model of contaminant transport in a bioretention cell. BCBlues objects
-    have the following properties:
-        
-    Attributes:
-    ----------
+#xdata = np.array([0.0,   1.0,  3.0, 4.3, 7.0,   8.0,   8.5, 10.0, 12.0])
+#ydata = np.array([0.01, 0.02, 0.04, 0.11, 0.43, 0.7, 0.89, 0.95, 0.99])
 
-            bcsumm (df): physical properties of the BC
-            chemsumm (df): phyical-chemical properties of modelled compounds
-            results (df): Results of the BC model
-            num_compartments (int): (optional) number of non-equilibirum 
-            compartments and size of D value matrix
-            name (str): (optional) name of the BC model 
-    """
-    def __init__(self,bcsumm,chemsumm,num_compartments = 7,name = None):
-        self.bcsumm = bcsumm
-        self.chemsumm = chemsumm
-        self.numc = num_compartments
-        self.name = name
-        
-                
-    def steady_state(self):
-        """ Model the bioretention cell at steady state. A steady state
-        bioretention cell is an n compartment fugacity model solved at steady
-        state using the compartment parameters from bcsumm and the chemical
-        parameters from chemsumm """
-        #Declare constants
-        R = 8.314 #Ideal gas constant, J/mol/K
-        #Initialize results
-        res = pd.DataFrame(chemsumm.iloc[:, 0])
-        #Calculate chemical-independent parameters
-        bcsumm.loc[:,'V']= bcsumm.Area*bcsumm.Depth #Add volumes  m³
-        bcsumm.loc[0,'Density'] = 0.029 * 101325 / (R * bcsumm.Temp[0]) #Air density kg/m^3
-        #bcsumm.loc[:,'Z']=0 #Add Z values to the bcsumm
-        numchems = 0
-        for chems in chemsumm.Compound:
-            numchems = numchems + 1
-        #Calculate Z-Values for chemical chem ZB(j) is the bulk Z value for compartment j
-        #0 - Air
-        bcsumm.loc[0,'Zbulk']=1/(R*bcsumm.Temp[0])
-        return res
+popt, pcov = curve_fit(sigmoid, xdata, ydata1)
+print(popt)
+
+x = np.linspace(-1, 2, 50)
+y = sigmoid(x, *popt)
+y1 = y * ydata[-1]
+
+pylab.plot(xdata, ydata, 'o', label='data')
+pylab.plot(x,y1, label='fit')
+pylab.ylim(0, 25)
+pylab.legend(loc='best')
+pylab.show()
