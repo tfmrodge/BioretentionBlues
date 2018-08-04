@@ -34,7 +34,7 @@ def arr_conv(Ea,T2,k1,T1 = 298.15,):
 
 def make_ppLFER(pp):
     """Check if ppLFER system parameters are in the pp file, if not generate
-    them.
+    them. The order is l,s,a,b,v, c.
     """
     #Aerosol-air ppLFER system parameters Arp (2008)
     if 'logKqa' not in pp.columns:
