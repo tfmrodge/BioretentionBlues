@@ -27,10 +27,10 @@ class BCBlues(FugModel):
             pplfer_system (df): (optional) input ppLFERs to use in the model
     """
     
-    def __init__(self,bcsumm,chemsumm,params,num_compartments = 7,name = None,pplfer_system = None):
-        FugModel. __init__(self,bcsumm,chemsumm,params,num_compartments,name)
+    def __init__(self,locsumm,chemsumm,params,num_compartments = 8,name = None,pplfer_system = None):
+        FugModel. __init__(self,locsumm,chemsumm,params,num_compartments,name)
         self.pp = pplfer_system
-        self.ic = self.input_calc(self.bcsumm,self.chemsumm,self.params,self.pp)        
+        self.ic = self.input_calc(self.locsumm,self.chemsumm,self.params,self.pp)        
                 
     def input_calc(self,locsumm,chemsumm,params,pp):
         """Calculate Z, D and inp values using the compartment parameters from
@@ -49,10 +49,10 @@ class BCBlues(FugModel):
         Ifd = 1 - np.exp(-2.8 * params.Value.Beta) #Vegetation dry deposition interception fraction
         #Compound-specific transport parameters
         #Fraction soil volume occupied by interstitial air and water
-        res.loc[:,'Bea'] = res.AirDiffCoeff*locsumm.VFAir.Soil**(10/3) \
-            /(locsumm.VFAir.Soil +locsumm.VFWat.Soil)**2
-        res.loc[:,'Bew'] = res.WatDiffCoeff*locsumm.VFWat.Soil**(10/3) \
-            /(locsumm.VFAir.Soil +locsumm.VFWat.Soil)**2
+        res.loc[:,'Bea'] = res.AirDiffCoeff*locsumm.VFAir.Filter**(10/3) \
+            /(locsumm.VFAir.Filter +locsumm.VFWat.Filter)**2
+        res.loc[:,'Bew'] = res.WatDiffCoeff*locsumm.VFWat.Filter**(10/3) \
+            /(locsumm.VFAir.Filter +locsumm.VFWat.Filter)**2
         res.loc[:,'k_av'] = res.AirDiffCoeff / delta_blv
         
         #ppLFER system parameters - initialize defaults if not there already
@@ -76,7 +76,6 @@ class BCBlues(FugModel):
             res.loc[:,'dUoa'] = ppLFER(res.L,res.S,
             res.A,res.B,res.V,pp.dUoa.l,pp.dUoa.s,pp.dUoa.a,pp.dUoa.b,pp.dUoa.v,pp.dUoa.c)
         res.loc[:,'Kqa'] = vant_conv(res.dUoa,locsumm.TempK.Air,10**res.LogKqa,T1 = 288.15) #Using air temp
-        res.loc[:,'LogKqa'] = np.log10(res.Kqa)
         #Organic carbon-water (KocW), use octanol-water enthalpy (dUow)
         if 'LogKocW' not in res.columns:
             res.loc[:,'LogKocW'] = ppLFER(res.L,res.S,
@@ -85,7 +84,6 @@ class BCBlues(FugModel):
             res.loc[:,'dUow'] = 1000 * ppLFER(res.L,res.S,
             res.A,res.B,res.V,pp.dUow.l,pp.dUow.s,pp.dUow.a,pp.dUow.b,pp.dUow.v,pp.dUow.c)
         res.loc[:,'KocW'] = vant_conv(res.dUow,locsumm.TempK.Filter,10**res.LogKocW) #Using Filter temp 
-        res.loc[:,'LogKocW'] = np.log10(res.KocW)
         #Storage Lipid Water (KslW), use ppLFER for dUslW (kJ/mol) convert to J/mol/K
         if 'LogKslW' not in res.columns:
             res.loc[:,'LogKslW'] = ppLFER(res.L,res.S,
@@ -94,7 +92,6 @@ class BCBlues(FugModel):
             res.loc[:,'dUslW'] = 1000 * ppLFER(res.L,res.S,
             res.A,res.B,res.V,pp.dUslW.l,pp.dUslW.s,pp.dUslW.a,pp.dUslW.b,pp.dUslW.v,pp.dUslW.c)
         res.loc[:,'KslW'] = vant_conv(res.dUslW,locsumm.TempK.Shoots,10**res.LogKslW,T1 = 310.15) #Use Shoots temp
-        res.loc[:,'LogKslW'] = np.log10(res.KslW)
         #Air-Water (Kaw) use dUaw
         if 'LogKaw' not in res.columns:
             res.loc[:,'LogKaw'] = ppLFER(res.L,res.S,
@@ -103,7 +100,6 @@ class BCBlues(FugModel):
             res.loc[:,'dUaw'] = 1000 * ppLFER(res.L,res.S,
             res.A,res.B,res.V,pp.dUaw.l,pp.dUaw.s,pp.dUaw.a,pp.dUaw.b,pp.dUaw.v,pp.dUaw.c)
         res.loc[:,'Kaw'] = vant_conv(res.dUaw,locsumm.TempK.Pond,10**res.LogKaw) #Use pond zone temperature
-        res.loc[:,'LogKaw'] = np.log10(res.Kaw)
         #Define storage lipid-air (KslA) and organic carbon-air (KocA) using the thermodynamic cycle
         #May have a temperature problem here too.
         res.loc[:,'KslA'] = res.KslW / res.Kaw
@@ -123,11 +119,11 @@ class BCBlues(FugModel):
             arr_conv(params.Value.EaAir,locsumm.TempK.Air,res.AirQOHRateConst * params.Value.OHConc)
         #Ponding zone (pond_rrxn) and pore water (pore_rrxn) converted from Wat half life (h)
         res.loc[:,'pond_rrxn'] = arr_conv(params.Value.Ea,locsumm.TempK.Pond,np.log(2)/res.WatHL)
-        res.loc[:,'pore_rrxn'] = arr_conv(params.Value.Ea,locsumm.TempK.Pore,np.log(2)/res.WatHL)
+        res.loc[:,'pore_rrxn'] = arr_conv(params.Value.Ea,locsumm.TempK.Pore_Water,np.log(2)/res.WatHL)
         #Filter (filt_rrxn) and schmutzdecke (schm_rrxn) converted from soil half life (h)
         #May want to better paramaterize this in the future
         res.loc[:,'filt_rrxn'] = arr_conv(params.Value.Ea,locsumm.TempK.Filter,np.log(2)/res.SoilHL)
-        res.loc[:,'schm_rrxn'] = arr_conv(params.Value.Ea,locsumm.TempK.Schmutzdecke,np.log(2)/res.SoilHL)
+        res.loc[:,'surf_rrxn'] = arr_conv(params.Value.Ea,locsumm.TempK.Surface,np.log(2)/res.SoilHL)
         #Vegetation is based off of air half life, this can be overridden if chemsumm contains a VegHL column
         #Assume that roots and shoots have same rate of reaction other than temperature, defined by VegHL
         if 'VegHL' in res.columns:
@@ -141,11 +137,75 @@ class BCBlues(FugModel):
             res.loc[:,'rhiz_rrxn'] = arr_conv(params.Value.Ea,params.Value.TempK,np.log(2)/res.RhizHL)
         else:
             res.loc[:,'rhiz_rrxn'] = 10*arr_conv(params.Value.Ea,locsumm.TempK.Rhizosphere,np.log(2)/res.SoilHL)
+            
+        #Calculate Z-values (mol/m³/Pa)
+        #Air Za
+        res.loc[:,'Za'] = 1/(R*locsumm.TempK.Air)
+        #Water in air
+        res.loc[:,'Za_w'] = 1/(vant_conv(res.dUaw,locsumm.TempK.Air,10**res.LogKaw) * R * locsumm.TempK.Air)
+        #Lower and Upper air Aerosol particles - composed of water and particle, with the water fraction defined
+        #by hygroscopic growth of the aerosol. Growth is defined as per the Berlin Spring aerosol from Arp et al. (2008)
+        if params.Value.RH > 100: #maximum RH = 100%
+            params.Value.RH = 100
+        #Hardcoded hygroscopic growth factor (GF) not ideal but ¯\_(ツ)_/¯
+        GF = np.interp(params.Value.RH/100,xp = [0.12,0.28,0.77,0.92],fp = [1.0,1.08,1.43,2.2],\
+                       left = 1.0,right = params.Value.RH/100*5.13+2.2)
+        #Volume fraction of water in aerosol
+        VFQW_a = (GF - 1) * locsumm.Density.Pond / ((GF - 1) * \
+                  locsumm.Density.Pond + locsumm.loc['Air','PartDensity'])
+        #Volume fraction of 'nucleus'
+        VFQp_a = 1 - VFQW_a
+        #Calculate aerosol Z values
+        res.loc[:,'Za_q'] = res.loc[:,'Za']*res.loc[:,'Kqa']*locsumm.loc['Air','PartDensity']\
+        *1000*VFQp_a+res.loc[:,'Za_w']*VFQW_a
+        #Ponding Zone Water
+        #Water Paw (nonequilbrium constant) value is calculated using the 
+        #ratio of Zair (Tair) and ZWater (Tpond) as per Scheringer (2000) 10.1021/es991085a
+        res.loc[:,'Zp_w'] = locsumm.TempK.Air/(locsumm.TempK.Pond*res.loc[:,'H'])
+        #Suspended Particles
+        res.loc[:,'Zp_q'] = res.Zp_w*vant_conv(res.dUow,locsumm.TempK.Pond,10**res.LogKocW)\
+        *locsumm.PartFrnOC.Pond * locsumm.PartDensity.Pond/1000
+        #Schmutzdecke/Surface layer
+        #This is a thin layer at the top of the BC consisting of mulch and some soil, where
+        #particles will settle. Biofilm? Growth due to particle settling, or definition as top x cm?
+        #In that case the filter zone will need to grow over time as well. I need to make sure that I am defining
+        #particle fractions based on a mass balance of particles  - this will be done by the bc_dims method
+        #Captured aerosol particles = Za*Kqa*PartFrnOCAir
+        res.loc[:,'Zsurf_aq'] = vant_conv(res.dUoa,locsumm.TempK.Surface,10**res.LogKqa,T1 = 288.15)\
+        *locsumm.PartDensity.Air*1000/(R*locsumm.TempK.Surface) * locsumm.PartFrnOC.Air
+        #Captured stormwater particles
+        res.loc[:,'Zsurf_wq'] = vant_conv(res.dUow,locsumm.TempK.Surface,10**res.LogKocW)\
+        *locsumm.PartFrnOC.Pond * locsumm.PartDensity.Pond/1000/ \
+        (vant_conv(res.dUaw,locsumm.TempK.Surface,10**res.LogKaw) * R * locsumm.TempK.Surface)
+        #Surface film layer -Ksla
+        res.loc[:,'Zsurf_f'] = vant_conv(res.dUslW,locsumm.TempK.Surface,10**res.LogKslW,T1 = 310.15)\
+        /vant_conv(res.dUaw,locsumm.TempK.Surface,10**res.LogKaw)*params.Value.VFOCFilm
         
-        #Convert back to half lives (h), good for error checking
-        res.loc[:,'AirHL'] = np.log(2)/(res.air_rrxn)
-        res.loc[:,'AirQHL'] = np.log(2)/(res.airq_rrxn)
-        res.loc[:,'WatHL'] = np.log(2)/(res.wat_rrxn)
+        
+        #Bulk Z Values (Zb_j)
+        #Air (1) - consists of Zq and Za
+        res.loc[:,'Zb_1'] = res.loc[:,'Za'] * (1-locsumm.VFPart.Air) + res.loc[:,'Za_q'] * locsumm.VFPart.Air
+        #Pond (2) - Sediment and bulk water
+        res.loc[:,'Zb_2'] = res.loc[:,'Zp_w'] * (1-locsumm.VFPart.Pond) + res.loc[:,'Zp_q'] * locsumm.VFPart.Pond
+        
+        return res
+        
+    def bc_dims(locsumm,inflows,weather):
+        """
+        Calculate BC dimension & compartment information for a given time step.
+        The output of this will be a "locsumm" file which can be fed into the rest of the model.
+        These calculations do not depend on the contaminant transport calculations.
+        
+        This module includes the water particle mass balances, both of which are
+        advective transfer media for compounds in the model.
+        """
+        
+        res = locsumm.copy(deep=True)
+        
+        
+        
+
+
 
             
         
