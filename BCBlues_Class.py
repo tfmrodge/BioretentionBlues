@@ -170,16 +170,35 @@ class BCBlues(FugModel):
         #particles will settle. Biofilm? Growth due to particle settling, or definition as top x cm?
         #In that case the filter zone will need to grow over time as well. I need to make sure that I am defining
         #particle fractions based on a mass balance of particles  - this will be done by the bc_dims method
+        #Surface Air
+        res.loc[:,'Zsurf_a'] = 1/(R*locsumm.TempK.Surf)
         #Captured aerosol particles = Za*Kqa*PartFrnOCAir
-        res.loc[:,'Zsurf_aq'] = vant_conv(res.dUoa,locsumm.TempK.Surface,10**res.LogKqa,T1 = 288.15)\
+        res.loc[:,'Zsurf_aq'] = res.Zsurf_a * vant_conv(res.dUoa,locsumm.TempK.Surface,10**res.LogKqa,T1 = 288.15)\
         *locsumm.PartDensity.Air*1000/(R*locsumm.TempK.Surface) * locsumm.PartFrnOC.Air
-        #Captured stormwater particles
+        #Captured stormwater particles - check
         res.loc[:,'Zsurf_wq'] = vant_conv(res.dUow,locsumm.TempK.Surface,10**res.LogKocW)\
         *locsumm.PartFrnOC.Pond * locsumm.PartDensity.Pond/1000/ \
         (vant_conv(res.dUaw,locsumm.TempK.Surface,10**res.LogKaw) * R * locsumm.TempK.Surface)
         #Surface film layer -Ksla
         res.loc[:,'Zsurf_f'] = vant_conv(res.dUslW,locsumm.TempK.Surface,10**res.LogKslW,T1 = 310.15)\
         /vant_conv(res.dUaw,locsumm.TempK.Surface,10**res.LogKaw)*params.Value.VFOCFilm
+        #Surface Leaf Litter - similar to film, defined from storage lipid
+        res.loc[:,'Zsurf_l'] = res.Zsurf_a * vant_conv(res.dUslW,locsumm.TempK.Surface,10**res.LogKslW,T1 = 310.15)\
+        /vant_conv(res.dUaw,locsumm.TempK.Surface,10**res.LogKaw)*locsumm.FrnOC.Shoots
+        #Surface Soil Particles (mostly mulch?)
+        res.loc[:,'Zsurf_s'] = res.Zsurf_a * vant_conv(res.dUow,locsumm.TempK.Surface,10**res.LogKocW)\
+        /vant_conv(res.dUaw,locsumm.TempK.Surface,10**res.LogKaw)*locsumm.FrnOC.Surface
+        #Filter Zone
+        #Filter Zone AIr
+        res.loc[:,'Zfilt_a'] = 1/(R*locsumm.TempK.Filter)
+        #Filter zone solids - equilibrium 
+        res.loc[:,'Zfilt_s'] = res.Zfilt_a * vant_conv(res.dUow,locsumm.TempK.Filter,10**res.LogKocW)\
+        /vant_conv(res.dUaw,locsumm.TempK.Filter,10**res.LogKaw)*locsumm.FrnOC.Filter
+        #Pore Water
+        #Pore Water - what about DOC? Is there a good way to deal with DOC - perhaps by increasing Zpw?
+        res.loc[:,'Zpore_w'] = 1/(vant_conv(res.dUaw,locsumm.TempK.Pore_Water,10**res.LogKaw) * R * locsumm.TempK.Air)
+        #
+        
         
         
         #Bulk Z Values (Zb_j)
@@ -187,7 +206,16 @@ class BCBlues(FugModel):
         res.loc[:,'Zb_1'] = res.loc[:,'Za'] * (1-locsumm.VFPart.Air) + res.loc[:,'Za_q'] * locsumm.VFPart.Air
         #Pond (2) - Sediment and bulk water
         res.loc[:,'Zb_2'] = res.loc[:,'Zp_w'] * (1-locsumm.VFPart.Pond) + res.loc[:,'Zp_q'] * locsumm.VFPart.Pond
+        #Surface (3) - SW particles, aerosol particles, film, leaf litter, air - Water is in pore layer.
+        res.loc[:,'Zb_3'] = res.loc[:,'Zsurf_aq'] * (locsumm.VFaq.Surface) + \
+        res.loc[:,'Zsurf_wq'] * locsumm.VFwq.Surface + res.loc[:,'Zsurf_f'] * locsumm.VFFilm.Surface\
+        +res.loc[:,'Zsurf_a'] * locsumm.VFAir.Surface + res.loc[:,'Zsurf_s'] * locsumm.VFSolids.Surface
+        #Filter Zone (4) - just air and solids
+        res.loc[:,'Zb_4'] = res.loc[:,'Zfilt_a'] * locsumm.VFAir.Filter + res.loc[:,'Zfilt_s'] * locsumm.VFSolids.Filter
+        #Pore Water (5) - Just pore water
+        res.loc[:,'Zb_5'] = res.loc[:,'Zpore_w']
         
+       
         return res
         
     def bc_dims(locsumm,inflows,weather):
