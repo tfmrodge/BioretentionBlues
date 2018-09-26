@@ -210,7 +210,7 @@ class FugModel(metaclass=ABCMeta):
             bw_out.iloc[chem,target_conc:] = fugsinp[target_conc-1:]
         return bw_out
     
-    def forward_step_uss(self,ic,num_compartments):
+    def forward_step_uss(self,ic,num_compartments,dt):
         """ Perform a forward calculation step to determine model unsteady-state fugacities
         based on input emissions. Input calcs need to include inp(t+1), DTi(t+1),
         and D_ij(t+1) for each compartment, mass M(n), as well as a column named

@@ -10,6 +10,7 @@ from HelperFuncs import ppLFER, vant_conv, arr_conv, make_ppLFER #Import helper 
 import numpy as np
 import pandas as pd
 
+
 class BCBlues(FugModel):
     """ Model of contaminant transport in a bioretention cell. BCBlues objects
     have the following properties:
@@ -119,7 +120,7 @@ class BCBlues(FugModel):
             arr_conv(params.Value.EaAir,locsumm.TempK.Air,res.AirQOHRateConst * params.Value.OHConc)
         #Ponding zone (pond_rrxn) and pore water (pore_rrxn) converted from Wat half life (h)
         res.loc[:,'pond_rrxn'] = arr_conv(params.Value.Ea,locsumm.TempK.Pond,np.log(2)/res.WatHL)
-        res.loc[:,'pore_rrxn'] = arr_conv(params.Value.Ea,locsumm.TempK.Pore_Water,np.log(2)/res.WatHL)
+        res.loc[:,'pore_rrxn'] = arr_conv(params.Value.Ea,locsumm.TempK.Filt_pores,np.log(2)/res.WatHL)
         #Filter (filt_rrxn) and schmutzdecke (schm_rrxn) converted from soil half life (h)
         #May want to better paramaterize this in the future
         res.loc[:,'filt_rrxn'] = arr_conv(params.Value.Ea,locsumm.TempK.Filter,np.log(2)/res.SoilHL)
@@ -218,28 +219,150 @@ class BCBlues(FugModel):
        
         return res
         
-    def bc_dims(locsumm,inflows,weather):
+    def bc_dims(locsumm,inflow,rainrate,dt,params):
         """
         Calculate BC dimension & compartment information for a given time step.
+        Forward calculation of t(n+1) from inputs at t(n)
         The output of this will be a "locsumm" file which can be fed into the rest of the model.
         These calculations do not depend on the contaminant transport calculations.
         
-        This module includes the water particle mass balances, both of which are
+        This module includes particle mass balances, wher particles are
         advective transfer media for compounds in the model.
+        Water flow modelling based on Randelovic et al (2016)
+        
+        locsumm gives the conditions at t(n)
+        Inflow in m³/s, rainrate in mm/h, dt in s
+        Initial conditions includes height of water (h), saturation(S)
+        Could make this just part of locsumm?
         """
         
         res = locsumm.copy(deep=True)
+        res.loc[:,'V'] = res.Area * res.Depth #Volume m³
+        res.loc[:,'P'] = 2 * (res.Area/res.Depth + res.Depth) #Perimeter, m ## Need to make into hydraulic perimeter##
+        #Ponding Zone
+        #Convert rain to flow rate (m³/s). Direct to ponding zone
+        Qr_in = res.Area.Air*rainrate/3.6E6 #m³/s
+        #Infiltration Kf is in mm/hr
+        #Potential
+        Qinf_poss = params.Value.Kf * (res.Depth.Pond + res.Depth.Filter)\
+        /res.Depth.Filter*res.Area.Filter
+        #Upstream max volume
+        Qinf_us = 1/dt * (res.V.Pond+(Qr_in+inflow)*dt)
+        #Downstream capacity
+        #Filter saturation in filt_pores depth column
+        res.loc['Filt_pores','Depth'] = res.V.Filt_pores /(res.V.Filter * (1-res.VFPart.Filter))
+        #Maximum infiltration to native soils, Ks is hydr. cond. of native soil
+        Q_max_inf = params.Value.Ks * (res.Area.Filter * res.P.Filter*params.Value.Cs)
+        Qinf_ds= 1/dt + ((1-res.Depth.Filt_pores)*(1-res.VFPart.Filter) * res.V.Filter) +Q_max_inf #Why not Qpipe here?
+        #FLow from pond to filter zone
+        Q26 = min(Qinf_poss,Qinf_us,Qinf_ds)
+        #Flow over weir
+        if res.Depth.Pond > params.Hw:
+            #Physically possible
+            Q2_wp = params.Cq * params.Bw * np.sqrt(2*9.81*(res.Depth.Pond - params.Hw)^3)
+            #Upstream Control
+            Q2_wus = 1/dt * (res.Depth.Pond - params.Hw)*params.Area.Pond + (Qr_in+inflow)*dt - Q26*dt
+            Q2_w = min(Q1_wp,Q2_wus)
+        else:
+            Q2_w = 0
+        #Exfiltration to surrounding soil
+        #Maximum possible
+        if res.Area.Filter > res.Area.Pond:
+            Qpexf_poss = params.Value.Ks*((res.Area.Pond-res.Area.Filter) + params.Value.Cs*res.P.Filter)
+        else:
+            Qpexf_poss = params.Value.Ks*params.Value.Cs*res.P.Filter
+        #Upstream availability, no need for downstream as it flows out of the system
+        Qpexf_us = 1/dt*(res.V.Pond) + (Qr_in+inflow-Q26-Q1_w)*dt
+        Q2_exf = min(Qpexf_poss,Qpexf_us) #Actual exfiltration
         
+        #Pond Volume from mass balance
+        #Change in pond volume dVp at t
+        dVp = (inflow + Qr_in - Q26 - Q2_w - Q2_exf)*dt
+        res.loc['Pond','V'] += dVp
+        #Ponding height m at t+1
+        res.loc['Pond','Depth'] = np.interp(res.V.Pond,params.loc['Vp',:],params.loc['hp',:],\
+                       left = 0, right = params.loc['hp','End'])  
+        #Area of ponding surface m² at t+1
+        res.loc['Pond','Area'] = np.interp(res.V.Pond,params.loc['Vp',:],params.loc['Ap',:],\
+                       params.loc['Ap','Value'], right = params.loc['Ap','End'])
+
+        #Pore Water Flow - filter zone
+        #Capillary Rise - from drainage/submerged zone to filter zone.
+        if res.Depth.Filt_Pores > params.Ss and res.Depth.Filt_Pores < params.Sfc:
+            Cr = 4 * params.Emax/(params.Value.Sfc - params.Value.Ss)
+            Q10_cp = res.Area.Filter * Cr * (res.Depth.Filt_Pores-params.Ss)*(params.Sfc - res.Depth.Filt_Pores)
+            #Upstream volume available (in drainage layer)
+            Q10_cus = ((1-res.VFPart.Filter)*res.Depth.Drain_pores*res.Area.Filter)/dt
+            #Space available in pore_filt
+            Q10_cds = 1/dt * ((1 - res.Depth.Filt_Pores)*(1-res.VFPart.Filter)*res.Depth.Filter*res.Area.Filter - Q26*dt)
+            Q106 = min(Q2_cp,Q2_cus,Q10_cds)
+        else: 
+            Q106 = 0
+        #Estimated saturation at time step t+1
+        S_est = min(1.0,res.Depth.Filt_Pores+Q26*dt/(res.V.Filter))
+        #Infiltration from filter_pore to drainage/submerged_pore layer
+        Q6_infp = res.Area.Filter*params.Kf*S_est*(res.Depth.Pond + res.Depth.Filter)/res.Depth.Filter
+        Q6_inf_us = 1/dt * ((res.Depth.Filt_Pores-params.Value.Sh)*res.VFPart.Filter*res.Depth.Filter*res.Area.Filter \
+                            + Q26 * dt + Q106 * dt)/dt
+        Q610 = min(Q6_infp,Q6_inf_us)
+        #Flow due to evapotranspiration. Some will go our the air, some will be transferred to the plants for cont. transfer?
+        if S_est <= params.Value.Sh:
+            Q6_etp = 0
+        elif S_est <= params.Value.Sw:
+            Q6_etp = res.Area.Filter * params.Value.Ew*(res.Depth.Filt_Pores-params.Value.Sh)\
+            /(params.Value.Sw - params.Value.Sh)
+        elif S_est <= params.Value.Ss:
+            Q6_etp = res.Area.Filter * (params.Value.Ew +(params.Value.Emax - params.Value.Ew)\
+            *(res.Depth.Filt_Pores-params.Value.Sw)/(params.Value.Ss - params.Value.Sw))
+        else:
+            Q6_etp = res.Area.Filter*params.Value.Emax
+        #Upstream available - should Q610 be subtracted maybe?
+        Q6_etus = 1/dt* ((res.Depth.Filt_Pores-params.Value.Sh)*(1-res.VFPart.Filter)*res.Area.Filter +(Q26+Q106+Q610)*dt)
+        Q6_et = min(Q6_etp,Q6_etus)
         
+        #Filter Pore Water Volume from mass balance
+        #Change in filter pore water volume dVf at t
+        dVf = (Q26 + Q106 - Q610 - Q6_et)*dt
+        res.loc['Filt_pores','V'] += dVf
+        #Filter Saturation (in the filt_pores depth column) at t+1
+        res.loc['Filt_pores','Depth'] = res.V.Filt_pores /(res.V.Filter * (1-res.VFPart.Filter))  
         
+        #Pore water flow - drainage/submerged zone
+        #Exfiltration from filter to native soil
+        Q10_exfp = params.Value.Ks * (res.Area.Drainage + params.Value.Cs*\
+                   res.P.Drainage*res.Depth.Drain_pores/res.Depth.Drainage)
+        Q10_exfus = 1/dt * ((1-res.VFPart.Drainage)*res.Depth.Drain_pores*res.Area.Drainage + (Q610-Q106)*dt)
+        Q10_exf = min(Q10_exfp,Q10_exfus)
+        #Drain through pipe
+        if res.Depth.Drain_pores >= params.Value.hpipe:
+            Q10_pipe = 1/dt * ((res.Depth.Drain_pores-params.Value.hpipe)*(1-res.VFPart.Drainage)\
+            *res.Area.Drainage + (Q610-Q106-Q10_exf)*dt)
+
+        #Drainage Pore Water Volume from mass balance
+        #Change in drainage pore water volume dVd at t
+        dVd = (Q610 - Q106 - Q10_exf - Q10_pipe)*dt
+        res.loc['Drain_pores','V'] += dVd
+        #Height of submerged zone
+        res.loc['Drain_pores','Depth'] = res.V.Drain_pores /(res.Area.Drainage * (1-res.VFPart.Drainage))
+        
+        #Put final flows into the res df. Flow rates are given as flow from a compartment (row)
+        #to another compartment (column). Flows out of the system have their own
+        #columns (eg exfiltration, ET, outflow), as do flows into the system.
+        res.loc['Pond','Qto6'] = Q26 #Infiltration to filter
+        res.loc['Pond','QOut'] = Q2_w #Weir overflow
+        res.loc['Pond','Qexf'] = Q2_exf #exfiltration from pond
+        res.loc['Pond','Qin'] = inflow #From outside system
+        res.loc['Filt_pores','Qto10'] = Q610 #Infiltration to drainage layer
+        res.loc['Filt_pores','QET'] = Q6_et #Infiltration to drainage layer
+        res.loc['Drain_pores','Qto6'] = Q106 #Capillary rise
+        res.loc['Drain_pores','Qexf'] = Q10_exf #exfiltration from drainage layer
+        res.loc['Drain_pores','QOut'] = Q10_pipe #Weir overflow
+        #Calculate VFair for drain and filter zones based on saturation
+        res.loc['Filter','VFAir'] = VFPart - res.Filt_pores.Depth
+        res.loc['Filter','VFAir'] = VFPart - res.Filt_pores.Depth
 
 
 
-            
-        
-            
-            
-        
         return res
     
     
