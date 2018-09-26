@@ -7,8 +7,9 @@ Created on Fri Jun 15 14:51:15 2018
 """
 #Import packages
 import pandas as pd
+import numpy as np
 
-#For ppLFER-MUM
+#Physical chemical properties
 chemsumm = pd.read_excel('OPECHEMSUMM.xlsx') #Import excel files as csv tends to truncate
 #Location summary for the modelled area. Descriptors should be in the first column (0)
 locsumm = pd.read_excel('BCsumm.xlsx',index_col = 0) 
