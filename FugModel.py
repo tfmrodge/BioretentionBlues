@@ -219,6 +219,21 @@ class FugModel(metaclass=ABCMeta):
         Possibly this doesn't belong in the parent class, to use it needs to be called
         in a loop which would be in a child classes method.
         """
+        
+    def 1DADRE_uss(self,ic,locsumm,num_compartments = 4,dt = 1,dx = 1):
+        """ Perform a single time step in a 1D ADRE multimedia model.
+        This solution to the 1D ADRE requires an input velocity to be provided, 
+        and will calculate across the entire spatial range of the modelled system.
+        Based on the QUICKEST algorithm or Manson and Wallis (1995), as implemented
+        in Kilic et al, (2009, DOI 10.1016/j.scitotenv.2009.01.057). I have generalized
+        the system so that it can be used with a single mobile phase and any number
+        of stationary compartments, where the mobile phase can be through porous media
+        or surface flow (if porosity phi = 1) Need to define the number of compartments
+        and give D values between all compartments.
+        """
+        
+        #Initialize outputs - not sure what the best thing to do here is.. 
+        
     
 
     
