@@ -31,7 +31,7 @@ class BCBlues(FugModel):
     def __init__(self,locsumm,chemsumm,params,num_compartments = 8,name = None,pplfer_system = None):
         FugModel. __init__(self,locsumm,chemsumm,params,num_compartments,name)
         self.pp = pplfer_system
-        self.ic = self.input_calc(self.locsumm,self.chemsumm,self.params,self.pp)        
+        #self.ic = self.input_calc(self.locsumm,self.chemsumm,self.params,self.pp)        
                 
     def input_calc(self,locsumm,chemsumm,params,pp):
         """Calculate Z, D and inp values using the compartment parameters from
