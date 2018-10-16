@@ -262,10 +262,11 @@ class FugModel(metaclass=ABCMeta):
         res.loc[(slice(None), 0),'V1_b'] = res.loc[(slice(None),0),'V1']
         res.loc[0:reslen-1,'V1_f'] = (res.V1.shift(-1) + res.V1)/2
         res.loc[(slice(None), numx-1),'V1_f'] = res.loc[(slice(None),numx-1),'V1']
-        #Darcy's flux, q, (L/T)
-        res.loc[1:reslen,'q_b'] = (res.q.shift(1) + res.q)/2
+        #Darcy's flux, q, (L/T). We use q not v because we need to know how far in x
+        #the fluid will move forwards for each dt, basically the average.
+        res.loc[1:reslen,'q_b'] = (res.q1.shift(1) + res.q1)/2
         res.loc[(slice(None), 0),'q_b'] = params.val.Qin/res.A
-        res.loc[0:reslen-1,'q_f'] = (res.q.shift(-1) + res.q)/2
+        res.loc[0:reslen-1,'q_f'] = (res.q1.shift(-1) + res.q1)/2
         res.loc[(slice(None), numx-1),'q_f'] = params.val.Qout/res.A
         #Dispersivity disp [l²/T]
         res.loc[1:reslen,'disp_b'] = (res.disp.shift(1) + res.disp)/2
@@ -280,7 +281,7 @@ class FugModel(metaclass=ABCMeta):
         
         #DISCUS algortithm semi-lagrangian 1D ADRE from Manson & Wallis (2000) DOI: 10.1016/S0043-1354(00)00131-7
         #Outside of the time loop, if flow is steady, or inside if flow changes
-        res.loc[:,'c'] = res.q*dt/res.dx
+        res.loc[:,'c'] = res.q1*dt/res.dx
         #time it takes to pass through each cell
         res.loc[:,'del_0'] = res.dx/((res.q_b + res.q_f)/2)
         #Set up dummy variables to be used inside the loop
