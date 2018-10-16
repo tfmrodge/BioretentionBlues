@@ -8,6 +8,19 @@ Created on Fri Oct 12 18:02:32 2018
 import pandas as pd
 import numpy as np
 
+def makeOroLoma(locsumm,chemsumm,params):
+    #Make the location summary of the Oro Loma system
+    #Compartments 1 - mobile water, 2 - soil in contact with mobile water,
+    #3 - veg, 4 - topsoil, 5 - air?
+    L = 30 #m
+    Qin = 2 #m³/s
+    Qout = 0.6 #m³/s
+    dx = 1 #m
+    phi_1 = 0.4 #Average porosity through which the mobile phase moves
+    phi_4 = 0.2 #Average porosity of the topsoil
+    res = pd.DataFrame(np.arange(0,L+dx,dx),columns = ['x'])
+
+
 def makeic():
         
     #Testing, so lets set up a simple problem. 
@@ -24,6 +37,14 @@ def makeic():
     
     chems = ['c1', 'c2', 'c3', 'c4', 'c5']
     #chems = ['c1']
+
+    #Z values
+    Z1 = 0.1 #[M/L³]
+    Z2 = 1
+    Z3 = 0.05
+    Z4 = 0.5
+    Z5 = 0.9
+    Z6 = 0.5
        
     D12 = 10 #D [M/t] from water to soil
     D13 = 0.1
@@ -56,13 +77,7 @@ def makeic():
     D64 = 0.05
     D65 = 0.2
     
-    #Z values
-    Z1 = 0.1 #[M/L³]
-    Z2 = 1
-    Z3 = 0.05
-    Z4 = 0.5
-    Z5 = 0.9
-    Z6 = 0.5
+
     #inputs
     inp_1 = 0
     inp_2 = 0
