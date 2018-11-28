@@ -36,18 +36,21 @@ def make_ppLFER(pp):
     """Check if ppLFER system parameters are in the pp file, if not generate
     them. The order is l,s,a,b,v, c.
     """
-    #Aerosol-air ppLFER system parameters Arp (2008)
+    #Aerosol-air ppLFER system parameters Arp (2008) 
     if 'logKqa' not in pp.columns:
         pp['logKqa'] = [0.63,1.38,3.21,0.42,0.98,-7.24]
-    #Organic Carbon - Water ppLFER system parameters Bronner & Goss (2011)
+    #Organic Carbon - Water ppLFER system parameters Bronner & Goss (2011) (L/kg)
     if 'logKocW' not in pp.columns:
         pp['logKocW'] = [0.54,-0.98,-0.42,-3.34,1.2,0.02]
-    #K Storage lipid - water Geisler, Endo, & Goss 2012
+    #Storage lipid - water Geisler, Endo, & Goss 2012 [L(water)/L(lipid)]
     if 'logKslW' not in pp.columns:
         pp['logKslW'] = [0.58,-1.62,-1.93,-4.15,1.99,0.55]
-    #K Air - water Goss (2005)
+    #Air - water Goss (2005)
     if 'logKaw' not in pp.columns:
         pp['logKaw'] = [-0.48,-2.07,-3.367,-4.87,2.55,0.59]
+    #Ionic Kow
+    #if 'logKowi' no in pp.columns:
+        
     #dU Storage lipid - Water Geisler et al. 2012 (kJ/mol)
     if 'dUslW' not in pp.columns:
         pp['dUslW'] = [10.51,-49.29,-16.36,70.39,-66.19,38.95]
