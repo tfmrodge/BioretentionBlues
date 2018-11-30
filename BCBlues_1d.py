@@ -8,6 +8,7 @@ from FugModel import FugModel #Import the parent FugModel class
 from HelperFuncs import ppLFER, vant_conv, arr_conv, make_ppLFER #Import helper functions
 import numpy as np
 import pandas as pd
+#import time
 import pdb #Turn on for error checking
 
 class BCBlues_1d(FugModel):
@@ -143,7 +144,7 @@ class BCBlues_1d(FugModel):
         if 'dUaw' not in res.columns: #!!!This might be broken - need to check units & sign!!!
             res.loc[:,'dUaw'] = 1000 * ppLFER(res.L,res.S,
             res.A,res.B,res.V,pp.dUaw.l,pp.dUaw.s,pp.dUaw.a,pp.dUaw.b,pp.dUaw.v,pp.dUaw.c)
-            
+                    
         #Define storage lipid-air (KslA) and organic carbon-air (KocA) using the thermodynamic cycle
         res.loc[:,'LogKslA'] = np.log10(10**res.LogKslW / 10**res.LogKaw)
         res.loc[:,'LogKocA'] = np.log10(10**res.LogKocW / 10**res.LogKaw)
@@ -278,6 +279,8 @@ class BCBlues_1d(FugModel):
         Pcut = 10**(0.704*res['dummy'].mul((chemsumm.LogKow), level = 0)-11.2) #m/s
         res.loc[:,'kcut'] = 1/(1/Pcut + 1/(res.kav*res['dummy'].mul((10**chemsumm.LogKaw), level = 0)))*86400 #m/d
         res.loc[:,'kvv'] = res.kcut+res.kst
+        
+       
        
         return chemsumm, res
 
@@ -314,9 +317,12 @@ class BCBlues_1d(FugModel):
             res.loc[:,'pKb'] = np.nan
         res.loc[:,'chemcharge'] = res['dummy'].mul(chemsumm.chemcharge, level = 0) #0 = neutral, -1 acid first, 1 - base first
         for j in range(numc): #Loop through compartments
-            dissi_j, dissn_j, pHj, Zwi_j = 'dissi_' + str(j+1),'dissn_' + str(j+1), 'pH' + str(j+1),'Zwi_' + str(j+1)
-            gammi_j, gammn_j, Ij, Zwn_j = 'gammi_' + str(j+1),'gammn_' + str(j+1),'I' + str(j+1),'Zwn_' + str(j+1)
-            Zqi_j, Zqn_j, Kdj, Kdij,rhopartj = 'Zqi_' + str(j+1),'Zqn_' + str(j+1),'Kd' +str(j+1),'Kdi' +str(j+1),'rhopart' +str(j+1)
+            dissi_j, dissn_j, pHj, Zwi_j = 'dissi_' + str(j+1),'dissn_' + str(j+1),\
+            'pH' + str(j+1),'Zwi_' + str(j+1)
+            gammi_j, gammn_j, Ij, Zwn_j = 'gammi_' + str(j+1),'gammn_' + str(j+1),\
+            'I' + str(j+1),'Zwn_' + str(j+1)
+            Zqi_j, Zqn_j, Kdj, Kdij,rhopartj = 'Zqi_' + str(j+1),'Zqn_' + str(j+1),\
+            'Kd' +str(j+1),'Kdi' +str(j+1),'rhopart' +str(j+1)
             #Dissociation of compounds in environmental media using Henerson-Hasselbalch equation
             #dissi_j - fraction ionic, dissn_j - fraction neutral. A pka of 999 = neutral
             #Multiplying by chemcharge takes care of the cations and the anions
@@ -361,10 +367,13 @@ class BCBlues_1d(FugModel):
         res.loc[:,'Z3'] = res.Zi3+res.Zn3
         
         #4 Top soil - Water, soil, air
-        res.loc[:,'Zi4'] = res.fwat4*(res.Zwi_4) + (1 - res.fwat4 - res.fair4) * res.Zqi_4 
-        res.loc[:,'Zn4'] = res.fwat4*(res.Zwn_4) + (1 - res.fwat4 - res.fair4) * res.Zqn_4 + res.fair4*res.Kaw4 
+        res.loc[:,'Zi4'] = res.fwat4*(res.Zwi_4) + (1 - res.fwat4 - res.fair4) *\
+        res.Zqi_4 
+        res.loc[:,'Zn4'] = res.fwat4*(res.Zwn_4) + (1 - res.fwat4 - res.fair4) *\
+        res.Zqn_4 + res.fair4*res.Kaw4 
         res.loc[:,'Zw4'] = res.fwat4*(res.Zwi_4) + res.fwat4*(res.Zwn_4)
-        res.loc[:,'Zq4'] = (1 - res.fwat4 - res.fair4) * res.Zqi_4  + (1 - res.fwat4 - res.fair4) * res.Zqn_4 
+        res.loc[:,'Zq4'] = (1 - res.fwat4 - res.fair4) * res.Zqi_4  + \
+        (1 - res.fwat4 - res.fair4) * res.Zqn_4 
         res.loc[:,'Z4'] = res.Zi4+res.Zn4
         
         #5 Air - water, aerosol, air 
@@ -373,19 +382,21 @@ class BCBlues_1d(FugModel):
         if params.val.RH > 100: #maximum RH = 100%
             params.val.RH = 100
         #Hardcoded hygroscopic growth factor (GF) not ideal but ¯\_(ツ)_/¯
-        GF = np.interp(params.val.RH/100,xp = [0.12,0.28,0.77,0.92],fp = [1.0,1.08,1.43,2.2],\
-                       left = 1.0,right = params.val.RH/100*5.13+2.2)
+        GF = np.interp(params.val.RH/100,xp = [0.12,0.28,0.77,0.92],fp = \
+                [1.0,1.08,1.43,2.2],left = 1.0,right = params.val.RH/100*5.13+2.2)
         #Volume fraction of water in aerosol 
         VFQW_a = (GF - 1) * locsumm.Density.Water / ((GF - 1) * \
                   locsumm.Density.Water + locsumm.loc['Air','PartDensity'])
         res.loc[:,'fwat5'] = res.fwat5 + res.fpart5*VFQW_a #add cloud water from locsumm
         res.loc[:,'Zi5'] = res.fwat5*(res.Zwi_5) + (res.fpart5) * res.Zqi_5
-        res.loc[:,'Zn5'] = res.fwat5*(res.Zwn_5) + (res.fpart5) * res.Zqn_5 + (1- res.fwat5-res.fpart5)*res.Kaw5 
+        res.loc[:,'Zn5'] = res.fwat5*(res.Zwn_5) + (res.fpart5) * res.Zqn_5 + \
+        (1- res.fwat5-res.fpart5)*res.Kaw5 
         res.loc[:,'Z5'] = res.Zi5+res.Zn5
         res.loc[:,'Zq5'] = res.fpart5*(res.Zqi_5 + res.Zqn_5)
         res.loc[:,'phi5'] = res.fpart5*(res.Zqi_5 + res.Zqn_5)/res.Z5 #particle bound fraction
         
-        #6 Root Body - main portion of the root. Consists of "free space" (soil pore water), and cytoplasm - could add vaccuol
+        #6 Root Body - main portion of the root. Consists of "free space" 
+        #(soil pore water), and cytoplasm - could add vaccuol
         res.loc[:,'Zi6'] = res.fwat6*(res.Zwi_6) + res.Zqi_6
         res.loc[:,'Zn6'] = res.fwat6*(res.Zwn_6) + res.Zqn_6 + res.fair6 * res.Kaw6 
         res.loc[:,'Zw6'] = res.fwat6*(res.Zwi_6) + res.fwat6*(res.Zwn_6)
@@ -406,9 +417,11 @@ class BCBlues_1d(FugModel):
         #D values (m³/h), N (mol/h) = a*D (activity based)
         #Loop through compartments to set reactive and out of system advective D values
         for j in range(numc): #Loop through compartments
-            Drj, Dadvj, Zj, rrxnj, Vj= 'Dr' + str(j+1),'Dadv' + str(j+1),'Z' + str(j+1),'rrxn' + str(j+1),'V' + str(j+1)
+            Drj, Dadvj, Zj, rrxnj, Vj= 'Dr' + str(j+1),'Dadv' + str(j+1),'Z' + \
+            str(j+1),'rrxn' + str(j+1),'V' + str(j+1)
             advj = 'adv' + str(j+1)
-            #Assuming that degradation is not species specific and happends on the bulk medium (unless over-written)
+            #Assuming that degradation is not species specific and happends on 
+            #the bulk medium (unless over-written)
             res.loc[:,Drj] = res.loc[:,Zj] * res.loc[:,Vj] * res.loc[:,rrxnj] 
             res.loc[:,Dadvj] = res.loc[:,Zj] * res.loc[:,Vj] * res.loc[:,advj]
         #For air, different reactive rate for the particle and bulk
@@ -416,7 +429,8 @@ class BCBlues_1d(FugModel):
         + res.phi5 * res.airq_rrxn
         
         #1 Water - interacts with subsoil and topsoil. May want to put direct ET to plants too
-        #Water - subsoil - transfer to pore water through ET and diffusion. May need to replace with a calibrated constant
+        #Water - subsoil - transfer to pore water through ET and diffusion. 
+        #May need to replace with a calibrated constant
         #From Mackay for water/sediment diffusion. Will be dominated by the ET flow so probably OK
         res.loc[:,'D_d12'] =  1/(1/(params.val.kxw*res.A2*res.Z1)+Y2/(res.A2*res.Deff1*res.Zw2)) 
         res.loc[:,'D_et12'] = res.Qet2*(res.Zwi_1+res.Zwn_1) #ET flow goes through subsoil first - may need to change
@@ -428,6 +442,13 @@ class BCBlues_1d(FugModel):
         res.loc[:,'D_14'] = res.D_d12 + res.D_et12 #Transfer to topsoil
         res.loc[:,'D_41'] = res.D_d12 #Transfer from topsoil
         res.loc[:,'DT1'] = res.D_12+res.D_14+res.Dadv1+res.Dr1 #Total D value
+        #Water does not go to shoots (3), air (5), roots (6-8). Explicit for error checking.
+        res.loc[:,'D_13'] = 0
+        res.loc[:,'D_15'] = 0
+        res.loc[:,'D_16'] = 0
+        res.loc[:,'D_17'] = 0
+        res.loc[:,'D_18'] = 0
+        
         
         #2 Subsoil - From water, to topsoil, to roots
         #Subsoil-Topsoil - Diffusion in water & particle settling(?). ET goes direct from flowing zone.
@@ -456,6 +477,11 @@ class BCBlues_1d(FugModel):
         res.loc[:,'D_72'] = res.D_rd72
         res.loc[:,'D_82'] = res.D_rd82
         res.loc[:,'DT2'] = res.D_21+res.D_24+res.D_26+res.Dadv2+res.Dr2 #Total D value
+        #Subsoil does not go to with shoots (3), air (5), roots (7-8). Explicit for error checking.
+        res.loc[:,'D_23'] = 0
+        res.loc[:,'D_25'] = 0
+        res.loc[:,'D_27'] = 0
+        res.loc[:,'D_28'] = 0
         
         #3 Shoots - interacts with central cylinder, air, topsoil
         #Shoots-air (Trapp 2007) see calcs in the calculation of kvv, it includes Qet in stomatal pathway
@@ -476,6 +502,11 @@ class BCBlues_1d(FugModel):
         res.loc[:,'D_38'] = 0 #Talk to Angela about this direction maybe
         res.loc[:,'D_83'] = res.D_et83
         res.loc[:,'DT3'] = res.D_35+res.D_34+res.D_38+res.D_sg+res.Dadv3+res.Dr3 #Total D value
+        #Shoots do not go to water (1), subsoil (2), roots (6-8, see above for 8). Explicit for error checking.
+        res.loc[:,'D_31'] = 0
+        res.loc[:,'D_32'] = 0
+        res.loc[:,'D_36'] = 0
+        res.loc[:,'D_37'] = 0
         
         #4 Topsoil - interacts with shoots, water, air, subsoil, roots
         #Topsoil-Air, volatilization
@@ -504,9 +535,18 @@ class BCBlues_1d(FugModel):
         res.loc[:,'D_45'] = res.D_d45
         res.loc[:,'D_54'] = res.D_d45 + res.D_wd54 + res.D_qs + res.D_ds
         res.loc[:,'DT4'] = res.D_41+res.D_42+res.D_43+res.D_45+res.D_46+res.Dadv4+res.Dr4 #Total D val
+        #Topsoil does not go to roots (7-8). Explicit for error checking.
+        res.loc[:,'D_47'] = 0
+        res.loc[:,'D_48'] = 0
         
         #5 Air - shoots, topsoil
         res.loc[:,'DT5'] = res.D_54 + res.D_53 +res.Dadv5+res.Dr5
+        #Air does not go to water (1), subsoil (2), roots (6-8). Explicit for error checking.
+        res.loc[:,'D_51'] = 0
+        res.loc[:,'D_52'] = 0
+        res.loc[:,'D_56'] = 0
+        res.loc[:,'D_57'] = 0
+        res.loc[:,'D_58'] = 0
         
         #6 Root Body - subsoil, xylem, topsoil
         #roots-xylem froot_tip is the fraction of root without secondary epothileum
@@ -521,6 +561,11 @@ class BCBlues_1d(FugModel):
         res.loc[:,'D_67'] = res.Drx_n+res.Drx_i+res.D_et6
         res.loc[:,'D_76'] = res.Dxr_n+res.Dxr_i
         res.loc[:,'DT6'] = res.D_62+res.D_64+res.D_67+res.D_rg6+res.Dadv6+res.Dr6 #Total D val
+        #Root body does not go to water (1), shoots(3), air (5), root (8). Explicit for error checking.
+        res.loc[:,'D_61'] = 0
+        res.loc[:,'D_63'] = 0
+        res.loc[:,'D_65'] = 0
+        res.loc[:,'D_68'] = 0
         
         #7 Xylem - root body, central cylinder
         #xylem-central cylinder - just advection
@@ -529,21 +574,107 @@ class BCBlues_1d(FugModel):
         res.loc[:,'D_78'] = res.D_et7
         res.loc[:,'D_87'] = 0
         res.loc[:,'DT7'] = res.D_72 + res.D_74 + res.D_78 + res.D_rg7 +res.Dadv7+res.Dr7 #Total D val
+        #Xylem does not go to water (1), shoots (3), air (5). Explicit for error checking.
+        res.loc[:,'D_71'] = 0
+        res.loc[:,'D_73'] = 0
+        res.loc[:,'D_75'] = 0
         
         #8 Root central cylinder - shoots, xylem
         res.loc[:,'D_rg8'] = params.val.k_rg*res.V8*res.Z8 #root growth
         res.loc[:,'DT8'] = res.D_82 + res.D_83 + res.D_83 + res.D_87 + res.D_rg8 +res.Dadv8+res.Dr8 #Total D val
+        #RCC does not go to water (1), air (5). Explicit for error checking.
+        res.loc[:,'D_81'] = 0
+        res.loc[:,'D_85'] = 0
+        res.loc[:,'D_86'] = 0
         
         return res
 
 
-    def run_it(self,locsumm,chemsumm,params,numc,pp,dt,timeseries):
+    def run_it(self,locsumm,chemsumm,params,numc,pp,timeseries):
         """Feed the calculated values into the ADRE equation over time.
         timeseries is the timeseries data of temperatures, rainfall, influent 
         concentrations, influent volumes, redox conditions? What else?
-        """
-        #First, update locsumm with advective flow based on wind, and temperature
-        res = self.input_calc(self,locsumm,chemsumm,params,pp,numc)
         
-        return res
+        timeseries(df): Contains all of the time-varying parameters. 2d dataframe
+        with a "time" column. Must contain Qin, Qout, RainRate, WindSpeed and 
+        input concentrations for each compound at each time step, others optional
+        """
+        
+        dt = timeseries.time[0] #Set this so it works
+        ntimes = len(timeseries['time'])
+        #Set up 4D output dataframe by adding time as the third multi-index
+        #Index level 0 = time, level 1 = chems, level 2 = cell number
+        times = timeseries.index
+        res_t = dict.fromkeys(times,[]) #This dict will contain the outputs
+        #pdb.set_trace()
+        for t in range(ntimes):
+            #First, update params. Updates:
+            #Qin, Qout, RainRate, WindSpeed, 
+            params.loc['Qin','val'] = timeseries.Qin[t] #m³/s
+            params.loc['Qout','val'] = timeseries.Qout[t] #m³/s
+            params.loc['RainRate','val'] = timeseries.RainRate[t] #m³/h
+            params.loc['WindSpeed','val'] = timeseries.WindSpeed[t] #m/s
+            #Next, update locsumm
+            #Temperature (Tj), pHj, condj
+            comps = locsumm.index
+            for j in range(numc):
+                Tj, pHj, condj = 'T' + str(j+1), 'pH' + str(j+1), 'cond'+ str(j+1)
+                if Tj in timeseries.columns: #Only update if this is a time-varying parameter
+                      locsumm.loc[comps[j],'Temp'] = timeseries.loc[t,Tj]
+                if pHj in timeseries.columns:
+                      locsumm.loc[comps[j],'Temp'] = timeseries.loc[t,pHj]
+                if condj in timeseries.columns:
+                          locsumm.loc[comps[j],'Temp'] = timeseries.loc[t,pHj]
+            #Need to update advective flow in air compartment,   
+            res = self.input_calc(locsumm,chemsumm,params,pp,numc)
+            
+            #Then add the upstream boundary condition
+            chems = chemsumm.index
+            for i in range(np.size(chems)):
+                chem_Cin = chems[i] + '_Cin'
+                #Assuming chemical concentration in g/m³ activity [mol/L³] = C/Z,
+                #using Z1 in the first cell (x) (0) 
+                chemsumm.loc[chems[i],'bc_us'] = timeseries.loc[t,chem_Cin]/\
+                chemsumm.MolMass[chems[i]]/res.Z1[chems[i],0] #mol/m³    
+            #Put it in res
+            res.loc[:,'bc_us'] = res['dummy'].mul(chemsumm.bc_us, level = 0) #mol/m³
+            #Initial conditions for each compartment
+            if t is 0: #Set initial conditions here. 
+                #initial Conditions
+                for j in range(0,numc):
+                    a_val = 'a'+str(j+1) + '_t'
+                    res.loc[:,a_val] = 0 #Can make different for the different compartments
+                    dt = timeseries.time[1]-timeseries.time[0]
+            else: #Set the previous solution aj_t1 to the inital condition (aj_t)
+                for j in range(0,numc):
+                    a_val, a_valt1 = 'a'+str(j+1) + '_t', 'a'+str(j+1) + '_t1'
+                    res_past = res_t[t-1].copy(deep=True)
+                    res.loc[:,a_val] = res_past.loc[:,a_valt1]
+                dt = timeseries.time[t] - timeseries.time[t-1] #timestep can vary
+            #Now - run it forwards a time step!
+            res = self.ADRE_1DUSS(res,params,numc,dt)
+            res_t[t] = res.copy(deep=True)
+            """
+            #Testing - just to have something here
+            for j in range(0,numc):
+                a_val = 'a'+str(j+1) + '_t1'
+                res.loc[:,a_val] = 0 
+
+            """
+            #Now comes the twicky part. Put together 
+            #for j in range(0,numc):
+            #    a_val = 'a'+str(j+1) + '_t'
+            #    res.loc[:,a_val] = 0
+        #Once we are out of the time loop, put the whole dataframe together
+        res_time = pd.concat(res_t)
+        """
+                chems = chemsumm.index
+        numchems = len(chems)
+        resi = dict.fromkeys(chems,[])
+        #Using the chems as the keys of the dict(resi) then concatenate
+        for i in range(numchems):
+            resi[chems[i]] = res.copy(deep=True)
+        res = pd.concat(resi)
+        """
+        return res_t, res_time
     
