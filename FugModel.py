@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 from abc import ABCMeta, abstractmethod
 from scipy.interpolate import interp1d
-#import time
+import time
 import pdb #Turn on for error checking
 #import xarray as xr #cite as https://openresearchsoftware.metajnl.com/articles/10.5334/jors.148/
 
@@ -237,12 +237,12 @@ class FugModel(metaclass=ABCMeta):
         Volumes Vj, Areas Aj, Darcy's flux/velocity (q) and dispersivity (disp)
         All D values between every compartment and all others, labelled D_jk
         Z values for all compartments labelled Zj
-        Inputs to every compartment, inp_j
         Activity/fugacity from current time step (t) in a column aj_t
+        Upstream boundary condition bc_us (per compound), activity/fugacity
+        (optional) Inputs to every compartment, inp_j
         
         params(df): Index is the parameter name, values in a "val" column
         Required inputs:
-        Upstream boundary condition bc_us, either activity or fugacity
         Inflow and outflow [L³] Qin, Qout
         
         num_compartments (int): number of compartments
@@ -256,6 +256,8 @@ class FugModel(metaclass=ABCMeta):
         numchems = len(chems)
         numx = int(len(res.x)/numchems)
         reslen = int(len(res.x))
+        res.loc[:,'dx'] = res.groupby(level = 0)['x'].diff()
+        res.loc[(slice(None),0),'dx'] = res.x[0]
         #Calculate forward and backward facial values
         #Back and forward facial Volumes (L³)
         res.loc[1:reslen,'V1_b'] = (res.V1.shift(1) + res.V1)/2
@@ -265,15 +267,15 @@ class FugModel(metaclass=ABCMeta):
         #Darcy's flux, q, (L/T). We use q not v because we need to know how far in x
         #the fluid will move forwards for each dt, basically the average.
         res.loc[1:reslen,'q_b'] = (res.q1.shift(1) + res.q1)/2
-        res.loc[(slice(None), 0),'q_b'] = params.val.Qin/res.A
+        res.loc[(slice(None), 0),'q_b'] = params.val.Qin/res.A1
         res.loc[0:reslen-1,'q_f'] = (res.q1.shift(-1) + res.q1)/2
-        res.loc[(slice(None), numx-1),'q_f'] = params.val.Qout/res.A
+        res.loc[(slice(None), numx-1),'q_f'] = params.val.Qout/res.A1
         #Dispersivity disp [l²/T]
         res.loc[1:reslen,'disp_b'] = (res.disp.shift(1) + res.disp)/2
         res.loc[(slice(None), 0),'disp_b'] = res.loc[(slice(None), 0),'disp']
         res.loc[0:reslen-1,'disp_f'] = (res.disp.shift(-1) + res.disp)/2
         res.loc[(slice(None), numx-1),'disp_f'] = res.loc[(slice(None), numx-1),'disp']
-        #Activity/Fugacity capacity Z
+        #Activity/Fugacity capacity Z [mol]
         res.loc[1:reslen,'Z1_b'] = (res.Z1.shift(1) + res.Z1)/2
         res.loc[(slice(None), 0),'Z1_b'] = res.loc[(slice(None),0),'Z1']
         res.loc[0:reslen-1,'Z1_f'] = (res.Z1.shift(-1) + res.Z1)/2
@@ -321,16 +323,16 @@ class FugModel(metaclass=ABCMeta):
             delrb_test[maskb] = dt - delb_test1
             delrf_test[maskf] = dt - delf_test1
             #Using delrb_test and the Darcy flux of the current cell, calculate  Xb_test1
-            xb_test1[maskb] = xb_test + delrb_test * res.groupby(level = 0)['q'].shift(dels+1)
-            xf_test1[maskf] = xf_test + delrf_test * res.groupby(level = 0)['q'].shift(dels)
+            xb_test1[maskb] = xb_test + delrb_test * res.groupby(level = 0)['q1'].shift(dels+1)
+            xf_test1[maskf] = xf_test + delrf_test * res.groupby(level = 0)['q1'].shift(dels)
             #Then, update the "dumb" distance travelled
             xb_test += res.groupby(level = 0)['dx'].shift(dels+1)
             xf_test += res.groupby(level = 0)['dx'].shift(dels)
         #Finally, do the last one last for the remaining NaNs & 0s
         delrb_test[delrb_test==0] = dt - delb_test1
         delrf_test[delrf_test==0] = dt - delf_test1
-        xb_test1[np.isnan(xb_test1)] = xb_test + delrb_test * res.groupby(level = 0)['q'].shift(dels+1)
-        xf_test1[np.isnan(xf_test1)] = xf_test + delrf_test * res.groupby(level = 0)['q'].shift(dels)
+        xb_test1[np.isnan(xb_test1)] = xb_test + delrb_test * res.groupby(level = 0)['q1'].shift(dels+1)
+        xf_test1[np.isnan(xf_test1)] = xf_test + delrf_test * res.groupby(level = 0)['q1'].shift(dels)
         #This is a bit clunky, but basically if they never left their own cell than xb_test1 = dt*q(x)
         mask = (res.c<=1)
         xb_test1[mask] = dt * res.q_b
@@ -366,17 +368,18 @@ class FugModel(metaclass=ABCMeta):
         M_us = 0
         if sum(mask) != 0:
             res[mask].groupby(level = 0)['del_0'].sum()
-            res.loc[mask,'M_star'] = params.val.bc_us*res.V1[mask]*res.Z1[mask]
+            res.loc[mask,'M_star'] = res.bc_us*res.V1[mask]*res.Z1[mask]
             M_us = res[mask].groupby(level = 0)['M_star'].sum()
         #Case 2 - xb is out of the range, but xf is in
         #Need to compute the sum of a spatial integral from x = 0 to xf and then the rest is temporal with the inlet
         mask = (res.xb == 0) & (res.xf != 0)
         slope = np.array(res.M_n[(slice(None),0)])/np.array((res.dx[(slice(None),0)]))
-        M_x = slope*np.array(res.xf[mask])
-        #For this temporal piece, we are going to just make the mass balance between the
-        #c1 BCs and this case, which will only ever have one cell as long as Xf(i-1) = xb(i)
-        M_t =  params.val.Qin*params.val.bc_us*dt*res.Z1[0] - M_us
-        res.loc[mask,'M_star'] = np.array(M_x + M_t)
+        if sum(mask) != 0:
+            M_x = slope*np.array(res.xf[mask])
+            #For this temporal piece, we are going to just make the mass balance between the
+            #c1 BCs and this case, which will only ever have one cell as long as Xf(i-1) = xb(i)
+            M_t =  params.val.Qin*res.bc_us[slice(None),0]*dt*res.Z1[slice(None),0] - M_us
+            res.loc[mask,'M_star'] = np.array(M_x + M_t)
         #Case 3 - too close to origin for cubic interpolation, so we will use linear interpolation
         #Not always going to occur, and since slope is a vector dimensions might not agree
         mask = np.isnan(res.M_star)
@@ -422,6 +425,8 @@ class FugModel(metaclass=ABCMeta):
         j,k = [0,0]
         for j in range(0,numc): #j is the row index
             inp_val = 'inp_' +str(j+1)
+            if inp_val not in res.columns: #If no inputs given assume zero
+                res.loc[:,inp_val] = 0
             #For the other cells the input is the source term less the value at time n
             if j == 0:
                 pass
@@ -445,7 +450,7 @@ class FugModel(metaclass=ABCMeta):
                     D_val = 'D_' +str(k+1)+str(j+1)
                     mat[m_vals+j,m_vals+k,:] = dt * np.array(res.loc[:,D_val]).reshape(numchems,numx).swapaxes(0,1)
         #Upstream boundary - need to add the diffusion term. DS boundary is dealt with already
-        inp[0,:] += -res.b[slice(None),0]*params.val.bc_us
+        inp[0,:] += -res.b[slice(None),0]*res.bc_us[slice(None),0]
         #Now, we will solve the matrix for each compound in turn (might be possible to do simultaneously)
         ii = 0
         outs = np.zeros([numx,numc,numchems])
