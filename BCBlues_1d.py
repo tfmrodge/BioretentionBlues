@@ -38,10 +38,22 @@ class BCBlues_1d(FugModel):
         #This function will build the dimensions of the 1D system based on the "locsumm" input file.
         #If you want to specify more things you can can just skip this and input a dataframe directly
         L = locsumm.Length.Water
+        params.loc['L','val'] = L
         if dx == None:
             dx = params.val.dx
+        #Smaller cells at influent
+        res = pd.DataFrame(np.arange(0.0+dx/2.0,L,dx),columns = ['x'])
+        #dx_in = params.val.dx/4.0
+        #res = pd.DataFrame(np.arange(0.0+dx_in/2.0,L/10.0,dx_in),columns = ['x'])
+        #res = res.append(pd.DataFrame(np.arange(res.iloc[-1,0]+dx_in/2,L,dx),columns = ['x']))
+        #res = pd.DataFrame(np.array(res),columns = ['x'])
+        #pdb.set_trace()
+        #Control volume length - x is in centre of each cell.
+        res.loc[:,'dx'] = res['x'].diff()/2+res['x'].shift(-1).diff()/2
+        res.loc[0,'dx'] = res.x[0] + res.dx[1]/2
+        res.iloc[-1,1] = res.iloc[-2,1]/2+L-res.iloc[-1,0]
         #Integer cell number is the index, columns are values, 'x' is the centre of each cell
-        res = pd.DataFrame(np.arange(0+dx/2,L,dx),columns = ['x'])
+        #res = pd.DataFrame(np.arange(0+dx/2,L,dx),columns = ['x'])
         #Set up the water compartment
         res.loc[:,'Q1'] = params.val.Qin - (params.val.Qin-params.val.Qout)/L*res.x 
         res.loc[:,'Qet'] = -1*res.Q1.diff() #ET flow 
@@ -49,6 +61,8 @@ class BCBlues_1d(FugModel):
         res.loc[:,'Qet2'] = res.Qet*params.val.fet2
         res.loc[:,'Qet4'] = res.Qet*params.val.fet4
         res.loc[:,'q1'] = res.Q1/(locsumm.Depth[0] * locsumm.Width[0])  #darcy flux [L/T] at every x
+        params.loc['qin','val'] = params.val.Qin/(locsumm.Depth[0] * locsumm.Width[0])
+        params.loc['qout','val'] = params.val.Qout/(locsumm.Depth[0] * locsumm.Width[0])
         res.loc[:,'porosity1'] = locsumm.Porosity[0] #added so that porosity can vary with x
         res.loc[:,'porosity2'] = locsumm.Porosity[1] #added so that porosity can vary with x
         res.loc[:,'porosity4'] = locsumm.Porosity[3]
@@ -68,7 +82,7 @@ class BCBlues_1d(FugModel):
                 pass
             else: #Other compartments don't share the same CV
                 res.loc[:,Aj] = locsumm.Width[j] * locsumm.Depth[j]
-            res.loc[:,Vj] = res.loc[:,Aj] * dx #volume at each x [L³]
+            res.loc[:,Vj] = res.loc[:,Aj] * res.dx #volume at each x [L³]
             res.loc[:,focj] = locsumm.FrnOC[j] #Fraction organic matter
             res.loc[:,Ij] = locsumm.cond[j]*1.6E-5 #Ionic strength from conductivity #Plants from Trapp (2000) = 0.5
             res.loc[:,fwatj] = locsumm.FrnWat[j] #Fraction water
@@ -83,10 +97,10 @@ class BCBlues_1d(FugModel):
                 res.loc[:,rhoj] = 0.029 * 101325 / (params.val.R * res.loc[:,tempj])
                 
         #Root volumes & area based off of volume fraction of soil
-        res.loc[:,'Vroot'] = params.val.VFroot*locsumm.Width[0]*dx #Total root volume per m² ground area
-        res.loc[:,'Aroot'] = params.val.Aroot*locsumm.Width[0]*dx #Need to define how much is in each section top and sub soil
-        res.loc[:,'A62'] = 0.1 * params.val.Aroot*locsumm.Width[0]*dx #Volume of roots in direct contact with subsoil
-        res.loc[:,'A62'] = 0.9 * params.val.Aroot*locsumm.Width[0]*dx #Volume of roots in contact with topsoil
+        res.loc[:,'Vroot'] = params.val.VFroot*locsumm.Width[0]*res.dx #Total root volume per m² ground area
+        res.loc[:,'Aroot'] = params.val.Aroot*locsumm.Width[0]*res.dx #Need to define how much is in each section top and sub soil
+        res.loc[:,'A62'] = 0.1 * params.val.Aroot*locsumm.Width[0]*res.dx #Volume of roots in direct contact with subsoil
+        res.loc[:,'A62'] = 0.9 * params.val.Aroot*locsumm.Width[0]*res.dx #Volume of roots in contact with topsoil
         #Roots are broken into the body, the xylem and the central cylinder.
         res.loc[:,'V6'] = (params.val.VFrootbody+params.val.VFapoplast)*res.Vroot #Main body consists of apoplast and cytoplasm
         res.loc[:,'V7'] = params.val.VFrootxylem*res.Vroot #Xylem
@@ -97,7 +111,7 @@ class BCBlues_1d(FugModel):
         #for unconsolidated sediment unless a value of alpha [L] is given
         if 'alpha' not in params.index:
             params.loc['alpha','val'] = 0.2 * L**0.44 #alpha = c(L)^m, c = 0.2 m = 0.44
-        res.loc[:,'ldisp'] = params.val.alpha * res.v1
+        res.loc[:,'ldisp'] = params.val.alpha * res.v1 #Resulting Ldisp is in [L²/T]
         return res
                     
     def make_chems(self,chemsumm,pp):
@@ -185,7 +199,7 @@ class BCBlues_1d(FugModel):
         res.loc[:,'Bea4'] = res['dummy'].mul(chemsumm.AirDiffCoeff, level = 0)*\
         res.fair4**(10/3)/(res.fair4 +res.fwat4)**2 #Effective air diffusion coefficient 
         #Dispersivity as the sum of the effective diffusion coefficient (Deff) and ldisp.
-        res.loc[:,'disp'] = res.ldisp + res.Deff1
+        res.loc[:,'disp'] = res.ldisp + res.Deff1 #Check units - Ldisp in [m²/T], T is from flow rate
         #Read dU values in for temperature conversions. Probably there is a better way to do this.
         res.loc[:,'dUoa'] = res['dummy'].mul(chemsumm.dUoa,level = 0)
         res.loc[:,'dUow'] = res['dummy'].mul(chemsumm.dUow,level = 0)
@@ -254,34 +268,32 @@ class BCBlues_1d(FugModel):
         else:
             res.loc[:,'airq_rrxn'] = res['dummy'].mul(chemsumm.AirOHRateConst*0.1, level = 0)*params.val.OHConc    
             res.loc[:,'airq_rrxn'] = arr_conv(params.val.EaAir,res.temp5,res.airq_rrxn)
-        
+        #pdb.set_trace()
         #Mass transfer coefficients (MTC) [l]/[T]
         #Chemical but not location specific mass transport values
         #Membrane neutral and ionic mass transfer coefficients, Trapp 2000
-        res.loc[:,'kmvn'] = 10**(1.2*res['dummy'].mul(chemsumm.LogKow, level = 0) - 7.5)
-        res.loc[:,'kmvi'] = 10**(1.2*(res['dummy'].mul(chemsumm.LogKow, level = 0) -3.5) - 7.5)
-        res.loc[:,'kspn'] = 1/(1/params.val.kcw + res.kmvn) #Neutral MTC between soil and plant
-        res.loc[:,'kspi'] = 1/(1/params.val.kcw + res.kmvi)
-        #Correct for kmin = 10E-10 m/s
-        res.loc[res.kspn<10E-10,'kspn'] = 10E-10
-        res.loc[res.kspi<10E-10,'kspi'] = 10E-10
+        res.loc[:,'kmvn'] = 10**(1.2*res['dummy'].mul(chemsumm.LogKow, level = 0) - 7.5) * 3600 #Convert from m/s to m/h
+        res.loc[:,'kmvi'] = 10**(1.2*(res['dummy'].mul(chemsumm.LogKow, level = 0) -3.5) - 7.5)* 3600 #Convert from m/s to m/h
+        res.loc[:,'kspn'] = 1/(1/params.val.kcw + 1/res.kmvn) #Neutral MTC between soil and plant. Assuming that there is a typo in Trapp (2000)
+        res.loc[:,'kspi'] = 1/(1/params.val.kcw + 1/res.kmvi)
+        #Correct for kmin = 10E-10 m/s for ions
+        kspimin = 10e-10*3600
+        res.loc[res.kspi<kspimin,'kspi'] = kspimin
         #Air side MTC for veg (from Diamond 2001)
-        delta_blv = 0.004 * ((0.07 / params.val.WindSpeed) ** 0.5) #leaf boundary layer depth
+        delta_blv = 0.004 * ((0.07 / params.val.WindSpeed) ** 0.5) #leaf boundary layer depth, windsped in m/s
         res.loc[:,'AirDiffCoeff'] = res['dummy'].mul(chemsumm.AirDiffCoeff, level = 0)
-        res.loc[:,'kav'] =  res.AirDiffCoeff/ delta_blv
-        #Veg side MTC from Trapp (2007). Consists of stomata and cuticles in parallel
+        res.loc[:,'kav'] = res.AirDiffCoeff/delta_blv #m/h
+        #Veg side (veg-air) MTC from Trapp (2007). Consists of stomata and cuticles in parallel
         #Stomata - First need to calculate saturation concentration of water
         C_h2o = (610.7*10**(7.5*(res.temp3-273.15)/(res.temp3-36.15)))/(461.9*res.temp3)
         g_h2o = res.Qet/(res.A3*(C_h2o-params.val.RH/100*C_h2o)) #MTC for water
         g_s = g_h2o*np.sqrt(18)/np.sqrt(res['dummy'].mul(chemsumm.MolMass, level = 0))
-        res.loc[:,'kst'] = g_s * res['dummy'].mul((10**chemsumm.LogKaw), level = 0) #MTC of stoata m/d
+        res.loc[:,'kst'] = g_s * res['dummy'].mul((10**chemsumm.LogKaw), level = 0) #MTC of stomata [L/T] (defined by Qet so m/h)
         #Cuticle
-        Pcut = 10**(0.704*res['dummy'].mul((chemsumm.LogKow), level = 0)-11.2) #m/s
-        res.loc[:,'kcut'] = 1/(1/Pcut + 1/(res.kav*res['dummy'].mul((10**chemsumm.LogKaw), level = 0)))*86400 #m/d
-        res.loc[:,'kvv'] = res.kcut+res.kst
-        
-       
-       
+        Pcut = 10**(0.704*res['dummy'].mul((chemsumm.LogKow), level = 0)-11.2)*3600 #m/h
+        res.loc[:,'kcut'] = 1/(1/Pcut + 1/(res.kav*res['dummy'].mul((10**chemsumm.LogKaw), level = 0))) #m/h
+        res.loc[:,'kvv'] = res.kcut+res.kst #m/h
+    
         return chemsumm, res
 
     def input_calc(self,locsumm,chemsumm,params,pp,numc):
@@ -302,7 +314,7 @@ class BCBlues_1d(FugModel):
         #numchems = len(chems)
         #R = params.val.R #Ideal gas constant, J/mol/K
         #Ifd = 1 - np.exp(-2.8 * params.Value.Beta) #Vegetation dry deposition interception fraction
-        Y2 = 1e-6 #Diffusion path length from mobile to immobile flowJust guessing here
+        Y2 = 1e-3 #Diffusion path length from mobile to immobile flow Just guessing here
         Y24 = locsumm.Depth[1]/2 #Half the depth of the mobile phase
         Y4 = locsumm.Depth[3]/2 #Diffusion path is half the depth. Probably should make vary in X
         Ifd = 1 - np.exp(-2.8 * params.val.Beta) #Vegetation dry deposition interception fraction
@@ -432,6 +444,7 @@ class BCBlues_1d(FugModel):
         #Water - subsoil - transfer to pore water through ET and diffusion. 
         #May need to replace with a calibrated constant
         #From Mackay for water/sediment diffusion. Will be dominated by the ET flow so probably OK
+        #pdb.set_trace()
         res.loc[:,'D_d12'] =  1/(1/(params.val.kxw*res.A2*res.Z1)+Y2/(res.A2*res.Deff1*res.Zw2)) 
         res.loc[:,'D_et12'] = res.Qet2*(res.Zwi_1+res.Zwn_1) #ET flow goes through subsoil first - may need to change
         res.loc[:,'D_12'] = res.D_d12 + res.D_et12 #Mobile to immobile phase
@@ -449,12 +462,11 @@ class BCBlues_1d(FugModel):
         res.loc[:,'D_17'] = 0
         res.loc[:,'D_18'] = 0
         
-        
         #2 Subsoil - From water, to topsoil, to roots
         #Subsoil-Topsoil - Diffusion in water & particle settling(?). ET goes direct from flowing zone.
         #Bottom is lined, so no settling out of the system
         res.loc[:,'D_d24'] = 1/(Y24/(res.A4*res.Deff1*res.Zw2)+Y2/(res.A4*res.Deff4*res.Zw4)) #Diffusion. A4 is area of 2/4 interface.
-        res.loc[:,'D_s42'] = params.val.U42*res.A4*res.Zq4 #Paticle settling
+        res.loc[:,'D_s42'] = params.val.U42*res.A4*res.Zq4 #Particle settling
         res.loc[:,'D_24'] = res.D_d24 #sub to topsoil
         res.loc[:,'D_42'] = res.D_d24 + res.D_s42 #top to subsoil
         #Subsoil-Root Body (6)
@@ -625,7 +637,7 @@ class BCBlues_1d(FugModel):
                       locsumm.loc[comps[j],'Temp'] = timeseries.loc[t,pHj]
                 if condj in timeseries.columns:
                           locsumm.loc[comps[j],'Temp'] = timeseries.loc[t,pHj]
-            #Need to update advective flow in air compartment,   
+            #Need to update advective flow in air compartment, 
             res = self.input_calc(locsumm,chemsumm,params,pp,numc)
             
             #Then add the upstream boundary condition
@@ -643,7 +655,7 @@ class BCBlues_1d(FugModel):
                 #initial Conditions
                 for j in range(0,numc):
                     a_val = 'a'+str(j+1) + '_t'
-                    res.loc[:,a_val] = 0 #Can make different for the different compartments
+                    res.loc[:,a_val] = 0 #1#Can make different for the different compartments
                     dt = timeseries.time[1]-timeseries.time[0]
             else: #Set the previous solution aj_t1 to the inital condition (aj_t)
                 for j in range(0,numc):
@@ -678,3 +690,4 @@ class BCBlues_1d(FugModel):
         """
         return res_t, res_time
     
+    #def mass_balance(self,locsumm,chemsumm,params,numc,pp,timeseries):
