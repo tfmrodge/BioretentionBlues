@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 from abc import ABCMeta, abstractmethod
 from scipy.interpolate import interp1d
+from scipy.optimize import minimize
 import time
 import pdb #Turn on for error checking
 #import xarray as xr #cite as https://openresearchsoftware.metajnl.com/articles/10.5334/jors.148/
@@ -256,8 +257,9 @@ class FugModel(metaclass=ABCMeta):
         numchems = len(chems)
         numx = int(len(res.x)/numchems)
         reslen = int(len(res.x))
-        res.loc[:,'dx'] = res.groupby(level = 0)['x'].diff()
-        res.loc[(slice(None),0),'dx'] = res.x[0]
+        if 'dx' not in res.columns: #
+            res.loc[:,'dx'] = res.groupby(level = 0)['x'].diff()
+            res.loc[(slice(None),0),'dx'] = res.x[0]
         #Calculate forward and backward facial values
         #Back and forward facial Volumes (L³)
         res.loc[1:reslen,'V1_b'] = (res.V1.shift(1) + res.V1)/2
@@ -267,9 +269,9 @@ class FugModel(metaclass=ABCMeta):
         #Darcy's flux, q, (L/T). We use q not v because we need to know how far in x
         #the fluid will move forwards for each dt, basically the average.
         res.loc[1:reslen,'q_b'] = (res.q1.shift(1) + res.q1)/2
-        res.loc[(slice(None), 0),'q_b'] = params.val.Qin/res.A1
+        res.loc[(slice(None), 0),'q_b'] = params.val.qin
         res.loc[0:reslen-1,'q_f'] = (res.q1.shift(-1) + res.q1)/2
-        res.loc[(slice(None), numx-1),'q_f'] = params.val.Qout/res.A1
+        res.loc[(slice(None), numx-1),'q_f'] = params.val.qout
         #Dispersivity disp [l²/T]
         res.loc[1:reslen,'disp_b'] = (res.disp.shift(1) + res.disp)/2
         res.loc[(slice(None), 0),'disp_b'] = res.loc[(slice(None), 0),'disp']
@@ -281,9 +283,11 @@ class FugModel(metaclass=ABCMeta):
         res.loc[0:reslen-1,'Z1_f'] = (res.Z1.shift(-1) + res.Z1)/2
         res.loc[(slice(None), numx-1),'Z1_f'] = res.loc[(slice(None),numx-1),'Z1']
         
-        #DISCUS algortithm semi-lagrangian 1D ADRE from Manson & Wallis (2000) DOI: 10.1016/S0043-1354(00)00131-7
+        #DISCUS algorithm semi-lagrangian 1D ADRE from Manson & Wallis (2000) DOI: 10.1016/S0043-1354(00)00131-7
         #Outside of the time loop, if flow is steady, or inside if flow changes
+        #Courant number, used to determine time
         res.loc[:,'c'] = res.q1*dt/res.dx
+        res.loc[:,'Pe'] = res.q1*res.dx/(res.disp) #Grid peclet number
         #time it takes to pass through each cell
         res.loc[:,'del_0'] = res.dx/((res.q_b + res.q_f)/2)
         #Set up dummy variables to be used inside the loop
@@ -319,37 +323,44 @@ class FugModel(metaclass=ABCMeta):
             #Do the same thing in reverse for delrb_test, if delrb_test is zero to prevent overwriting
             #Create a mask showing the cells that are finished
             maskb = (delb_test>dt) & (delrb_test==0)
+            delrb_test[maskb] = dt - delb_test1 #Time remaining in the time step, back face
             maskf = (delf_test>dt) & (delrf_test==0)
-            delrb_test[maskb] = dt - delb_test1
-            delrf_test[maskf] = dt - delf_test1
-            #Using delrb_test and the Darcy flux of the current cell, calculate  Xb_test1
+            delrf_test[maskf] = dt - delf_test1 #Time remaining in the time step, forward face
+            #Using delrb_test and the Darcy flux of the current cell, calculate  the total distance each face travels
             xb_test1[maskb] = xb_test + delrb_test * res.groupby(level = 0)['q1'].shift(dels+1)
             xf_test1[maskf] = xf_test + delrf_test * res.groupby(level = 0)['q1'].shift(dels)
             #Then, update the "dumb" distance travelled
             xb_test += res.groupby(level = 0)['dx'].shift(dels+1)
             xf_test += res.groupby(level = 0)['dx'].shift(dels)
-        #Finally, do the last one last for the remaining NaNs & 0s
+        #Outside the loop, we clean up the boundaries and problem cases
+        #Do a final iteration for remaining NaNs & 0s
         delrb_test[delrb_test==0] = dt - delb_test1
         delrf_test[delrf_test==0] = dt - delf_test1
         xb_test1[np.isnan(xb_test1)] = xb_test + delrb_test * res.groupby(level = 0)['q1'].shift(dels+1)
         xf_test1[np.isnan(xf_test1)] = xf_test + delrf_test * res.groupby(level = 0)['q1'].shift(dels)
-        #This is a bit clunky, but basically if they never left their own cell than xb_test1 = dt*q(x)
-        mask = (res.c<=1)
-        xb_test1[mask] = dt * res.q_b
-        xf_test1[mask] = dt * res.q_f
+        #Set those which don't cross a full cell
+        xb_test1[res.groupby(level = 0)['del_0'].shift(1)>=dt] = res.groupby(level = 0)['q1'].shift(1)*dt
+        xf_test1[res.del_0>=dt] = res.q1*dt
         #Bring what we need to res. The above could be made a function to clean things up too.
         #Distance from the forward and back faces
-        res.loc[:,'xb'] = res.x - res.dx/2 - xb_test1
-        res.loc[:,'xf'] = res.x + res.dx/2 - xf_test1
+        res.loc[:,'xb'] = (res.x+res.x.shift(1))/2 - xb_test1
+        res.loc[:,'xf'] = (res.x+res.x.shift(-1))/2 - xf_test1
+        res.loc[(slice(None),numx-1),'xf'] = params.val.L - xf_test1
+        #For continuity, xb is the xf of the previous step
+        mask = res.xb != res.groupby(level = 0)['xf'].shift(1)
+        res.loc[mask,'xb'] = res.groupby(level = 0)['xf'].shift(1)
         #Clean up the US boundary, anything NAN or < 0 comes from before the origin
         maskb = (np.isnan(res.xb) | (res.xb < 0))
         maskf = (np.isnan(res.xf)) | (res.xf < 0)
         res.loc[maskb,'xb'] = 0
         res.loc[maskf,'xf'] = 0
+        #Downstream boundary, xb ends up zero so set equal to corresponding xf
+        #res.loc[(slice(None),numx-1),'xb'] = np.array(res.loc[(slice(None),numx-2),'xf'])
         #Define the cumulative mass along the entire length of the system as M(x) = sum (Mi)
         #This is defined at the right hand face of each cell. M = ai*Zi*Vi, at time n
-        res.loc[:,'M_i'] = res.a1_t * res.Z1 * res.V1
-        res.loc[:,'M_n'] = res.groupby(level = 0)['M_i'].cumsum()
+        #pdb.set_trace()
+        res.loc[:,'M_i'] = res.a1_t * res.Z1 * res.V1 #Mass in each cell
+        res.loc[:,'M_n'] = res.groupby(level = 0)['M_i'].cumsum() #Cumulative mass
         #Then, we advect one time step. To advect, just shift everything as calculated above.
         #We will use a cubic interpolation. Unfortunately, we have to unpack the data 
         #in order to get this to work.
@@ -368,7 +379,7 @@ class FugModel(metaclass=ABCMeta):
         M_us = 0
         if sum(mask) != 0:
             res[mask].groupby(level = 0)['del_0'].sum()
-            res.loc[mask,'M_star'] = res.bc_us*res.V1[mask]*res.Z1[mask]
+            res.loc[mask,'M_star'] = res.bc_us*res.V1[mask]*res.Z1[mask] #Everything in these cells comes from outside of the domain
             M_us = res[mask].groupby(level = 0)['M_star'].sum()
         #Case 2 - xb is out of the range, but xf is in
         #Need to compute the sum of a spatial integral from x = 0 to xf and then the rest is temporal with the inlet
@@ -389,7 +400,7 @@ class FugModel(metaclass=ABCMeta):
         res.loc[:,'a_star'] = res.M_star / res.Z1 / res.V1
         
         #Finally, we can set up & solve our implicit portion!
-        #This is sort of based on the methods of Manson and Wallis (2000) and Kilic & Aral (2009)
+        #This is based on the methods of Manson and Wallis (2000) and Kilic & Aral (2009)
         #Define the spatial weighting term (P) 
         res.loc[:,'P'] =dt/(res.dx)
         #Now define the spacial weighting terms as f, m, & b. 
@@ -444,10 +455,14 @@ class FugModel(metaclass=ABCMeta):
                     else: #Otherwise, place the DT values in the matrix
                         D_val, D_valm, V_val, Z_val = 'DT' + str(k+1),'DTm' + str(k+1), 'V' + str(k+1), 'Z' + str(k+1)
                         #Modify DT to reflect the differential equation
+                        if np.any(res.loc[:,D_val]< 0):
+                            pass
                         res.loc[:,D_valm] = dt*res.loc[:,D_val] + res.loc[:,V_val]*res.loc[:,Z_val]
                         mat[m_vals+j,m_vals+j,:] = -np.array(res.loc[:,D_valm]).reshape(numchems,numx).swapaxes(0,1)
                 else: #Place the intercompartmental D values
                     D_val = 'D_' +str(k+1)+str(j+1)
+                    if np.any(res.loc[:,D_val]< 0):
+                        pass
                     mat[m_vals+j,m_vals+k,:] = dt * np.array(res.loc[:,D_val]).reshape(numchems,numx).swapaxes(0,1)
         #Upstream boundary - need to add the diffusion term. DS boundary is dealt with already
         inp[0,:] += -res.b[slice(None),0]*res.bc_us[slice(None),0]
@@ -455,12 +470,28 @@ class FugModel(metaclass=ABCMeta):
         ii = 0
         outs = np.zeros([numx,numc,numchems])
         for ii in range(numchems):
-            a_val = a_val = 'a'+str(j+1) + '_t1'
-            matsol = np.linalg.solve(mat[:,:,ii],inp[:,ii])
+            matsol = np.linalg.solve(mat[:,:,ii],inp[:,ii]) #Old code, gives negative values
+            """
+            if sum(matsol<0) > 0:
+            #Code to prevent negative values, from https://stackoverflow.com/questions/36968955/numpy-linear-system-with-specific-conditions-no-negative-solutions
+                A = mat[:,:,ii]
+                b = inp[:,ii]
+                n = len(b)
+                fun = lambda x: np.linalg.norm(np.dot(A,x)-b)
+                sol = minimize(fun, np.zeros(n), method='L-BFGS-B', bounds=[(0.,None) for x in range(n)])
+                matsol2 = matsol #for tracking
+                matsol = sol['x']
             #Results from the time step for each compartment, giving the activity at time t+1
-            outs[:,:,ii] = matsol.reshape(numx,numc)
+            """
+            outs[:,:,ii] = matsol.reshape(numx,numc) #sol['x']
         #Reshape outs to match the res file
+        #Error checking
+        #if sum(sum(sum(outs<0))) >0:
+        #    WHY = 'GODDANGIT'
+        #    xx = sum(sum(mat<0))
+        #    xy = sum(sum(inp>0))
         outs = outs.swapaxes(1,2).swapaxes(0,1).reshape(numx*numchems,numc)
+
         #Loop through the compartments and put the output values into our output res dataframe
         for j in range(numc):
             a_val = 'a'+str(j+1) + '_t1'
