@@ -7,7 +7,7 @@ Created on Fri Feb  1 10:38:36 2019
 import pdb
 #pdb.set_trace()
 time = 0
-numc=8
+numc=1
 dt = 1
 res = res_t[time]
 lastcell = 9
