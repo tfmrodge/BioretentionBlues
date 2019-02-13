@@ -39,14 +39,18 @@ class BCBlues_1d(FugModel):
         #If you want to specify more things you can can just skip this and input a dataframe directly
         L = locsumm.Length.Water
         params.loc['L','val'] = L
+        #dx = 0.1
         if dx == None:
             dx = params.val.dx
         #Smaller cells at influent
-        res = pd.DataFrame(np.arange(0.0+dx/2.0,L,dx),columns = ['x'])
-        #dx_in = params.val.dx/4.0
-        #res = pd.DataFrame(np.arange(0.0+dx_in/2.0,L/10.0,dx_in),columns = ['x'])
-        #res = res.append(pd.DataFrame(np.arange(res.iloc[-1,0]+dx_in/2,L,dx),columns = ['x']))
-        #res = pd.DataFrame(np.array(res),columns = ['x'])
+        samegrid = False
+        if samegrid == True:
+            res = pd.DataFrame(np.arange(0.0+dx/2.0,L,dx),columns = ['x'])
+        else:
+            dx_in = params.val.dx/5
+            res = pd.DataFrame(np.arange(0.0+dx_in/2.0,L/10.0,dx_in),columns = ['x'])
+            res = res.append(pd.DataFrame(np.arange(res.iloc[-1,0]+dx_in/2,L,dx),columns = ['x']))
+            res = pd.DataFrame(np.array(res),columns = ['x'])
         #pdb.set_trace()
         #Control volume length - x is in centre of each cell.
         res.loc[:,'dx'] = res['x'].diff()/2+res['x'].shift(-1).diff()/2
@@ -61,15 +65,15 @@ class BCBlues_1d(FugModel):
         res.loc[:,'Qet2'] = res.Qet*params.val.fet2
         res.loc[:,'Qet4'] = res.Qet*params.val.fet4
         res.loc[:,'q1'] = res.Q1/(locsumm.Depth[0] * locsumm.Width[0])  #darcy flux [L/T] at every x
-        params.loc['qin','val'] = params.val.Qin/(locsumm.Depth[0] * locsumm.Width[0])
-        params.loc['qout','val'] = params.val.Qout/(locsumm.Depth[0] * locsumm.Width[0])
         res.loc[:,'porosity1'] = locsumm.Porosity[0] #added so that porosity can vary with x
         res.loc[:,'porosity2'] = locsumm.Porosity[1] #added so that porosity can vary with x
         res.loc[:,'porosity4'] = locsumm.Porosity[3]
         #Include immobile phase water content, so that Vw is only mobile phase & V2 includes immobile phase
         res.loc[:,'A1'] = locsumm.Width[0] * locsumm.Depth[0] * res.porosity1 * params.val.thetam
         res.loc[:,'A2'] = locsumm.Width[0] * locsumm.Depth[0] * (res.porosity2 + res.porosity1*(1-params.val.thetam))
-        res.loc[:,'v1'] = res.q1/res.porosity1 #velocity [L/T] at every x
+        res.loc[:,'v1'] = res.Q1/res.A1 #velocity [L/T] at every x - velocity is eq
+        params.loc['vin','val'] = params.val.Qin/(res.A1[0])
+        params.loc['vout','val'] = params.val.Qout/(res.A1[0])
         #Now loop through the columns and set the values
         #pdb.set_trace()
         for j in range(numc):
@@ -365,7 +369,7 @@ class BCBlues_1d(FugModel):
         #1 Water - Consists of suspended solids and pure water
         res.loc[:,'Zi1'] = (1-res.fpart1) * (res.Zwi_1) + res.fpart1 * (res.Zqi_1)
         res.loc[:,'Zn1'] = (1-res.fpart1) * (res.Zwn_1) + res.fpart1 * (res.Zqn_1)
-        res.loc[:,'Z1'] = res.Zi1+res.Zn1
+        res.loc[:,'Z1'] = 1#res.Zi1+res.Zn1
         
         #2 Subsoil - Immobile-phase water and soil particles
         res.loc[:,'Zi2'] = res.fwat2*(res.Zwi_2) + (res.fpart2)*(res.Zqi_2)
@@ -638,8 +642,8 @@ class BCBlues_1d(FugModel):
                 if condj in timeseries.columns:
                           locsumm.loc[comps[j],'Temp'] = timeseries.loc[t,pHj]
             #Need to update advective flow in air compartment, 
-            res = self.input_calc(locsumm,chemsumm,params,pp,numc)
-            
+           # res = self.input_calc(locsumm,chemsumm,params,pp,numc)
+            res = self.input_calc(locsumm,chemsumm,params,pp,8) #For running with fewer than 8 compartments
             #Then add the upstream boundary condition
             chems = chemsumm.index
             for i in range(np.size(chems)):
@@ -664,6 +668,8 @@ class BCBlues_1d(FugModel):
                     res.loc[:,a_val] = res_past.loc[:,a_valt1]
                 dt = timeseries.time[t] - timeseries.time[t-1] #timestep can vary
             #Now - run it forwards a time step!
+            #Feed the time to params
+            params.loc['Time','val']=t
             res = self.ADRE_1DUSS(res,params,numc,dt)
             res_t[t] = res.copy(deep=True)
             """

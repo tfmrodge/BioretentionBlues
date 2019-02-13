@@ -266,12 +266,11 @@ class FugModel(metaclass=ABCMeta):
         res.loc[(slice(None), 0),'V1_b'] = res.loc[(slice(None),0),'V1']
         res.loc[0:reslen-1,'V1_f'] = (res.V1.shift(-1) + res.V1)/2
         res.loc[(slice(None), numx-1),'V1_f'] = res.loc[(slice(None),numx-1),'V1']
-        #Darcy's flux, q, (L/T). We use q not v because we need to know how far in x
-        #the fluid will move forwards for each dt, basically the average.
-        res.loc[1:reslen,'q_b'] = (res.q1.shift(1) + res.q1)/2
-        res.loc[(slice(None), 0),'q_b'] = params.val.qin
-        res.loc[0:reslen-1,'q_f'] = (res.q1.shift(-1) + res.q1)/2
-        res.loc[(slice(None), numx-1),'q_f'] = params.val.qout
+        #Fluid velocity, v, (L/T). How far the fluid moves through the media in each time step
+        res.loc[1:reslen,'v_b'] = (res.v1.shift(1) + res.v1)/2
+        res.loc[(slice(None), 0),'v_b'] = params.val.vin
+        res.loc[0:reslen-1,'v_f'] = (res.v1.shift(-1) + res.v1)/2
+        res.loc[(slice(None), numx-1),'v_f'] = params.val.vout
         #Dispersivity disp [l²/T]
         res.loc[1:reslen,'disp_b'] = (res.disp.shift(1) + res.disp)/2
         res.loc[(slice(None), 0),'disp_b'] = res.loc[(slice(None), 0),'disp']
@@ -286,10 +285,10 @@ class FugModel(metaclass=ABCMeta):
         #DISCUS algorithm semi-lagrangian 1D ADRE from Manson & Wallis (2000) DOI: 10.1016/S0043-1354(00)00131-7
         #Outside of the time loop, if flow is steady, or inside if flow changes
         #Courant number, used to determine time
-        res.loc[:,'c'] = res.q1*dt/res.dx
-        res.loc[:,'Pe'] = res.q1*res.dx/(res.disp) #Grid peclet number
+        res.loc[:,'c'] = res.v1*dt/res.dx
+        res.loc[:,'Pe'] = res.v1*res.dx/(res.disp) #Grid peclet number
         #time it takes to pass through each cell
-        res.loc[:,'del_0'] = res.dx/((res.q_b + res.q_f)/2)
+        res.loc[:,'del_0'] = res.dx/((res.v_b + res.v_f)/2)
         #Set up dummy variables to be used inside the loop
         delb_test = pd.Series().reindex_like(res)
         delb_test[:] = 0 #Challenger time, accepted if <= dt
@@ -327,8 +326,8 @@ class FugModel(metaclass=ABCMeta):
             maskf = (delf_test>dt) & (delrf_test==0)
             delrf_test[maskf] = dt - delf_test1 #Time remaining in the time step, forward face
             #Using delrb_test and the Darcy flux of the current cell, calculate  the total distance each face travels
-            xb_test1[maskb] = xb_test + delrb_test * res.groupby(level = 0)['q1'].shift(dels+1)
-            xf_test1[maskf] = xf_test + delrf_test * res.groupby(level = 0)['q1'].shift(dels)
+            xb_test1[maskb] = xb_test + delrb_test * res.groupby(level = 0)['v1'].shift(dels+1)
+            xf_test1[maskf] = xf_test + delrf_test * res.groupby(level = 0)['v1'].shift(dels)
             #Then, update the "dumb" distance travelled
             xb_test += res.groupby(level = 0)['dx'].shift(dels+1)
             xf_test += res.groupby(level = 0)['dx'].shift(dels)
@@ -336,11 +335,11 @@ class FugModel(metaclass=ABCMeta):
         #Do a final iteration for remaining NaNs & 0s
         delrb_test[delrb_test==0] = dt - delb_test1
         delrf_test[delrf_test==0] = dt - delf_test1
-        xb_test1[np.isnan(xb_test1)] = xb_test + delrb_test * res.groupby(level = 0)['q1'].shift(dels+1)
-        xf_test1[np.isnan(xf_test1)] = xf_test + delrf_test * res.groupby(level = 0)['q1'].shift(dels)
+        xb_test1[np.isnan(xb_test1)] = xb_test + delrb_test * res.groupby(level = 0)['v1'].shift(dels+1)
+        xf_test1[np.isnan(xf_test1)] = xf_test + delrf_test * res.groupby(level = 0)['v1'].shift(dels)
         #Set those which don't cross a full cell
-        xb_test1[res.groupby(level = 0)['del_0'].shift(1)>=dt] = res.groupby(level = 0)['q1'].shift(1)*dt
-        xf_test1[res.del_0>=dt] = res.q1*dt
+        xb_test1[res.groupby(level = 0)['del_0'].shift(1)>=dt] = res.groupby(level = 0)['v1'].shift(1)*dt
+        xf_test1[res.del_0>=dt] = res.v1*dt
         #Bring what we need to res. The above could be made a function to clean things up too.
         #Distance from the forward and back faces
         res.loc[:,'xb'] = (res.x+res.x.shift(1))/2 - xb_test1
@@ -366,12 +365,24 @@ class FugModel(metaclass=ABCMeta):
         #in order to get this to work.
         chems = res.index.levels[0]
         for ii in range(numchems):
-            #Added the zero at the front as M(0) = 0
+            #Added the zero at the front as M_n(0) = 0
             xx = np.append(0,res.loc[(chems[ii], slice(None)),'x'] + res.loc[(chems[ii], slice(None)),'dx']/2)
             yy = np.append(0,res.loc[(chems[ii], slice(None)),'M_n'])
-            f = interp1d(xx,yy,kind='cubic',bounds_error = False)
+            #xx = np.array(res.loc[(chems[ii], slice(None)),'x'] + res.loc[(chems[ii], slice(None)),'dx']/2)
+            #yy = np.array(res.loc[(chems[ii], slice(None)),'M_n'])
+            #f = interp1d(xx,yy,kind='cubic',bounds_error = False)
+            f = interp1d(xx,yy,kind='cubic',fill_value='extrapolate')
+            f1 = interp1d(xx,yy,kind='linear',fill_value='extrapolate')#Linear interpolation where cubic fails
             res.loc[(chems[ii], slice(None)),'M_star'] = f(res.loc[(chems[ii], slice(None)),'xf'])\
             - f(res.loc[(chems[ii], slice(None)),'xb'])
+            #check if the cubic interpolation failed (<0), use linear in those place.
+            mask = res.loc[(chems[ii], slice(None)),'M_star'] < 0
+            if sum(mask) != 0:
+                pdb.set_trace()
+                #res.loc[(chems[ii], mask),'M_star'] = f1(res.loc[(chems[ii],mask),'xf'])\
+                #- f1(res.loc[(chems[ii], mask),'xb'])
+                res.loc[(chems[ii], slice(None)),'M_star'] = f1(res.loc[(chems[ii], slice(None)),'xf'])\
+                - f1(res.loc[(chems[ii], slice(None)),'xb'])
             #US boundary conditions
         #Case 1 - both xb and xf are outside the domain. 
         #This is kind of a dummy simplification, but it only makes a small artefact so w/e. Fix later if there is time
@@ -398,6 +409,9 @@ class FugModel(metaclass=ABCMeta):
             res.loc[mask,'M_star'] = slope * (res.xf[mask] - res.xb[mask])
         #Divide out to get back to activity/fugacity entering from advection
         res.loc[:,'a_star'] = res.M_star / res.Z1 / res.V1
+        #Error checking, does the advection part work?
+        res.loc[:,'a1_t1'] = res.a_star 
+        """
         
         #Finally, we can set up & solve our implicit portion!
         #This is based on the methods of Manson and Wallis (2000) and Kilic & Aral (2009)
@@ -411,7 +425,7 @@ class FugModel(metaclass=ABCMeta):
         res.loc[(slice(None),0),'b'] = 2*res.P*res.V1_b*res.Z1_b*res.disp_b/(res.dx)
         #forward (f) term acting on x(i+1)
         res.loc[:,'f'] = 2*res.P*res.V1_f*res.Z1_f*res.disp_f/(res.dx + res.groupby(level = 0)['dx'].shift(-1))
-        res.loc[(slice(None),numx-1),'f'] = 0
+        res.loc[(slice(None),numx-1),'f'] = 0 #No diffusion across downstream boundary
         #Middle (m) term acting on x(i) - this will be subracted in the matrix (-m*ai)
         #Upstream and downstream BCs have been dealt with in the b and f terms
         res.loc[:,'m'] = res.f+res.b+dt*res.DT1+res.V1*res.Z1
@@ -471,18 +485,18 @@ class FugModel(metaclass=ABCMeta):
         outs = np.zeros([numx,numc,numchems])
         for ii in range(numchems):
             matsol = np.linalg.solve(mat[:,:,ii],inp[:,ii]) #Old code, gives negative values
-            """
-            if sum(matsol<0) > 0:
-            #Code to prevent negative values, from https://stackoverflow.com/questions/36968955/numpy-linear-system-with-specific-conditions-no-negative-solutions
-                A = mat[:,:,ii]
-                b = inp[:,ii]
-                n = len(b)
-                fun = lambda x: np.linalg.norm(np.dot(A,x)-b)
-                sol = minimize(fun, np.zeros(n), method='L-BFGS-B', bounds=[(0.,None) for x in range(n)])
-                matsol2 = matsol #for tracking
-                matsol = sol['x']
+
+        #Code to prevent negative values, from https://stackoverflow.com/questions/36968955/numpy-linear-system-with-specific-conditions-no-negative-solutions
+            #if sum(matsol<0) > 0:
+            #    A = mat[:,:,ii]
+            #    b = inp[:,ii]
+            #    n = len(b)
+            #    fun = lambda x: np.linalg.norm(np.dot(A,x)-b)
+            #    sol = minimize(fun, np.zeros(n), method='L-BFGS-B', bounds=[(0.,None) for x in range(n)])
+            #    matsol2 = matsol #for tracking
+            #    matsol = sol['x']
             #Results from the time step for each compartment, giving the activity at time t+1
-            """
+
             outs[:,:,ii] = matsol.reshape(numx,numc) #sol['x']
         #Reshape outs to match the res file
         #Error checking
@@ -496,7 +510,12 @@ class FugModel(metaclass=ABCMeta):
         for j in range(numc):
             a_val = 'a'+str(j+1) + '_t1'
             res.loc[:,a_val] = outs[:,j]
+            if sum(res.loc[:,a_val]<0) >0:
+                pdb.set_trace()
+                xxx = 1
             
+        #xxx = 1   
+        """
         return res
 
 
