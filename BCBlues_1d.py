@@ -42,12 +42,12 @@ class BCBlues_1d(FugModel):
         #dx = 0.1
         if dx == None:
             dx = params.val.dx
-        #Smaller cells at influent
-        samegrid = False
+        #Smaller cells at influent - testing turn on/off
+        samegrid = True
         if samegrid == True:
             res = pd.DataFrame(np.arange(0.0+dx/2.0,L,dx),columns = ['x'])
         else:
-            dx_in = params.val.dx/5
+            dx_in = params.val.dx/10
             res = pd.DataFrame(np.arange(0.0+dx_in/2.0,L/10.0,dx_in),columns = ['x'])
             res = res.append(pd.DataFrame(np.arange(res.iloc[-1,0]+dx_in/2,L,dx),columns = ['x']))
             res = pd.DataFrame(np.array(res),columns = ['x'])
@@ -104,7 +104,7 @@ class BCBlues_1d(FugModel):
         res.loc[:,'Vroot'] = params.val.VFroot*locsumm.Width[0]*res.dx #Total root volume per m² ground area
         res.loc[:,'Aroot'] = params.val.Aroot*locsumm.Width[0]*res.dx #Need to define how much is in each section top and sub soil
         res.loc[:,'A62'] = 0.1 * params.val.Aroot*locsumm.Width[0]*res.dx #Volume of roots in direct contact with subsoil
-        res.loc[:,'A62'] = 0.9 * params.val.Aroot*locsumm.Width[0]*res.dx #Volume of roots in contact with topsoil
+        res.loc[:,'A64'] = 0.9 * params.val.Aroot*locsumm.Width[0]*res.dx #Volume of roots in contact with topsoil
         #Roots are broken into the body, the xylem and the central cylinder.
         res.loc[:,'V6'] = (params.val.VFrootbody+params.val.VFapoplast)*res.Vroot #Main body consists of apoplast and cytoplasm
         res.loc[:,'V7'] = params.val.VFrootxylem*res.Vroot #Xylem
@@ -326,6 +326,7 @@ class BCBlues_1d(FugModel):
         #Calculate activity-based Z-values (m³/m³). This is where things start
         #to get interesting if compounds are not neutral. Z(j) is the bulk Z value
         #Refs - Csiszar et al (2011), Trapp, Franco & MacKay (2010), Mackay et al (2011)
+        #pdb.set_trace()
         res.loc[:,'pKa'] = res['dummy'].mul(chemsumm.pKa, level = 0) #999 = neutral
         if 'pKb' in chemsumm.columns: #Check for zwitters
             res.loc[:,'pKb'] = res['dummy'].mul(chemsumm.pKb, level = 0) #Only fill in for zwitterionic compounds
@@ -369,7 +370,7 @@ class BCBlues_1d(FugModel):
         #1 Water - Consists of suspended solids and pure water
         res.loc[:,'Zi1'] = (1-res.fpart1) * (res.Zwi_1) + res.fpart1 * (res.Zqi_1)
         res.loc[:,'Zn1'] = (1-res.fpart1) * (res.Zwn_1) + res.fpart1 * (res.Zqn_1)
-        res.loc[:,'Z1'] = 1#res.Zi1+res.Zn1
+        res.loc[:,'Z1'] = res.Zi1+res.Zn1
         
         #2 Subsoil - Immobile-phase water and soil particles
         res.loc[:,'Zi2'] = res.fwat2*(res.Zwi_2) + (res.fpart2)*(res.Zqi_2)
@@ -648,10 +649,11 @@ class BCBlues_1d(FugModel):
             chems = chemsumm.index
             for i in range(np.size(chems)):
                 chem_Cin = chems[i] + '_Cin'
-                #Assuming chemical concentration in g/m³ activity [mol/L³] = C/Z,
+                Z_us = res.Zwn_1[chems[i],0] + res.Zwi_1[chems[i],0] #Inlet activity capacity
+                #Assuming chemical concentration in g/m³ activity [mol/m³] = C/Z,
                 #using Z1 in the first cell (x) (0) 
                 chemsumm.loc[chems[i],'bc_us'] = timeseries.loc[t,chem_Cin]/\
-                chemsumm.MolMass[chems[i]]/res.Z1[chems[i],0] #mol/m³    
+                chemsumm.MolMass[chems[i]]/Z_us#res.Z1[chems[i],0] #mol/m³    
             #Put it in res
             res.loc[:,'bc_us'] = res['dummy'].mul(chemsumm.bc_us, level = 0) #mol/m³
             #Initial conditions for each compartment
