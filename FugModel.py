@@ -51,6 +51,7 @@ class FugModel(metaclass=ABCMeta):
     ----------
 
             ppLFERMUM - ppLFERMUM of Rodgers et al. (2018) based on MUM of Diamond et al (2001)
+            MICS - multimedia chemical screening of Kvasnicka (in prep) based on ICECRM (Zhang, 2014) & agent based model (2018)
             BCBlues - BioretentionCell Blues model of Rodgers et al. (in prep)
             
     """ 
@@ -77,47 +78,45 @@ class FugModel(metaclass=ABCMeta):
         """ Perform forward calculations to determine model steady state fugacities
         based on input emissions. Initial_calcs (ic) are calculated at the initialization
         of the chosen model and include the matrix values DTi, and D_ij for each compartment
-        as well as a column named compound
-        num_compartments (numc) defines the size of the matrix
+        as well as a column named compound num_compartments (numc) defines the size of the matrix
         """
         #Determine number of chemicals
-        #pdb.set_trace()
-        numchems = 0
-        for chems in ic.Compound:
-            numchems = numchems + 1
+        pdb.set_trace()
+        numc  = num_compartments
+        try:
+            numchems = len(ic.Compound)
+        except AttributeError: #Error handling for different models
+            numchems = len(ic.index)
             
         #Initialize output - the calculated fugacity of every compartment
-        col_name = pd.Series(index = range(num_compartments))
-        for i in range(num_compartments):
+        col_name = pd.Series(index = range(numc))
+        for i in range(numc):
             col_name[i] = 'f'+str(i+1)
-        fw_out = pd.DataFrame(index = ic['Compound'],columns = col_name)
-        
+        try:
+            fw_out = pd.DataFrame(index = ic['Compound'],columns = col_name)
+        except KeyError:
+            fw_out = pd.DataFrame(index = ic.index,columns = col_name)
         #generate matrix. Names of D values in ic must conform to these labels:
         #DTj for total D val from compartment j and D_jk for transfer between compartments j and k
         #Initialize a blank matrix of D values. We will iterate across this to solve for each compound
-        D_mat = pd.DataFrame(index = range(num_compartments),columns = range(num_compartments))
+        D_mat = np.zeros((numchems,numc,numc))
         #initialize a blank dataframe for input vectors, RHS of matrix
-        inp_val = pd.DataFrame(index = range(num_compartments),columns = ic.Compound)
-        for chem in ic.index: #Index of chemical i
-            for j in D_mat.index: #compartment j, index of D_mat
-                #Define RHS input for every compartment j
-                inp_name = 'inp_' + str(j + 1) #must have an input for every compartment, even if it is zero
-                inp_val.iloc[j,chem] = -ic.loc[chem,inp_name]
-                for k in D_mat.columns: #compartment k, column of D_mat
-                    if j == k:
-                        DT = 'DT' + str(j + 1)
-                        D_mat.iloc[j,k] = -ic.loc[chem,DT]
-                    else:
-                        D_val = 'D_' +str(k+1)+str(j+1) #label compartments from 1
-                        if D_val in ic.columns: #Check if there is transfer between the two compartments
-                            D_mat.iloc[j,k] = ic.loc[chem,D_val]
-                        else:
-                            D_mat.iloc[j,k] = 0 #If no transfer, set to 0
+        inp_val = np.zeros([numchems,numc])
+        for j in range(numc): #compartment j, row index
+            #Define RHS input for every compartment j
+            inp_name = 'inp_' + str(j + 1) #must have an input for every compartment, even if it is zero
+            inp_val[:,j] = -ic.loc[:,inp_name]
+            for k in range(numc): #compartment k, column index
+                if j == k:
+                    DT = 'DT' + str(j + 1)
+                    D_mat[:,j,k] = -ic.loc[:,DT]
+                else:
+                    D_val = 'D_' +str(k+1)+str(j+1) #label compartments from 1
+                    if D_val in ic.columns: #Check if there is transfer between the two compartments
+                        D_mat[:,j,k] = ic.loc[:,D_val]
             #Solve for fugacities f = D_mat\inp_val
-            lhs = np.array(D_mat,dtype = float)
-            rhs = np.array(inp_val.iloc[:,chem],dtype = float)
-            fugs = np.linalg.solve(lhs,rhs)
-            fw_out.iloc[chem,:] = fugs
+        fugs = np.linalg.solve(D_mat,inp_val)
+        fw_out.iloc[:,:] = fugs
         
         return fw_out
 
@@ -132,6 +131,12 @@ class FugModel(metaclass=ABCMeta):
         the concentration corresponds with, while target_emiss defines which compartment
         the emissions are to. Default = 1, Lair in ppLFER-MUM. Currently, the output is
         a dataframe with the fugacities of each compartment and the emissions in g/h.
+        
+        Overall, we are going to solve a matrix of (numc-1) x (numc-1), eliminating the
+        compartment with the target concentration and moving  the known fugacity 
+        to the right hand side (RHS) of the equations for the other compartments. Then we 
+        solve for the fugacities in all the other compartments and the inputs to the target
+        compartment, which we put in the D_mat
         """
         #Initialize outputs
         #pdb.set_trace()
@@ -154,6 +159,9 @@ class FugModel(metaclass=ABCMeta):
             #Put the target fugacity into the output
             bw_out.iloc[chem,target_conc-1] = ic.loc[chem,targ_name]
             #Double loop to set matrix values
+            #This first while loop takes the values from the input calcs and 
+            #gets them into a form where they can be put in our (numc-1) x (numc-1)
+            #matrix which we are solving
             j = 0 #Index to pull values from ic
             while j < num_compartments: #compartment j, index of D_mat
                 #Define RHS = -Inp(j) - D(Tj)*f(T) for every compartment j using target T
@@ -312,7 +320,9 @@ class FugModel(metaclass=ABCMeta):
         #in a time step. 
         dels = 0
         #for dels in range(int(max(1,max(np.floor(res.c))))): #Max cells any go through (could be wrong if q increases)
-        for dels in range(int(max(np.floor(res.c)))):
+        #pdb.set_trace()
+        numcells = int(max(np.floor(res.c)))#max(int(max(np.floor(res.c))),1)
+        for dels in range(numcells):
             #Time to traverse a full cell
             delb_test += res.groupby(level = 0)['del_0'].shift(dels+1)
             delf_test += res.groupby(level = 0)['del_0'].shift(dels)
@@ -357,40 +367,57 @@ class FugModel(metaclass=ABCMeta):
         #res.loc[(slice(None),numx-1),'xb'] = np.array(res.loc[(slice(None),numx-2),'xf'])
         #Define the cumulative mass along the entire length of the system as M(x) = sum (Mi)
         #This is defined at the right hand face of each cell. M = ai*Zi*Vi, at time n
-        #pdb.set_trace()
-        res.loc[:,'M_i'] = res.a1_t * res.Z1 * res.V1 #Mass in each cell
+        res.loc[:,'M_i'] = res.a1_t * res.Z1 * res.V1 #Mass in each cell at time t
         res.loc[:,'M_n'] = res.groupby(level = 0)['M_i'].cumsum() #Cumulative mass
+        #res.loc[:,'xbfav'] = (res.xb+res.xf)/2 #Centre of domain of influence
+        res.loc[:,'V_doi'] = (res.xf - res.xb)*res.A1
         #Then, we advect one time step. To advect, just shift everything as calculated above.
         #We will use a cubic interpolation. Unfortunately, we have to unpack the data 
         #in order to get this to work.
         chems = res.index.levels[0]
         for ii in range(numchems):
             #Added the zero at the front as M_n(0) = 0
-            xx = np.append(0,res.loc[(chems[ii], slice(None)),'x'] + res.loc[(chems[ii], slice(None)),'dx']/2)
+            xx = np.append(0,res.loc[(chems[ii], slice(None)),'dx'].cumsum())#forward edge of each cell
             yy = np.append(0,res.loc[(chems[ii], slice(None)),'M_n'])
-            #xx = np.array(res.loc[(chems[ii], slice(None)),'x'] + res.loc[(chems[ii], slice(None)),'dx']/2)
-            #yy = np.array(res.loc[(chems[ii], slice(None)),'M_n'])
-            #f = interp1d(xx,yy,kind='cubic',bounds_error = False)
+            """
+            #Testing to see if multiplying a and Z better
+            xx = np.array(res.loc[(chems[ii], slice(None)),'x'])#Middle
+            at = np.array(res.loc[(chems[ii], slice(None)),'a1_t'])
+            Z1 = np.array(res.loc[(chems[ii], slice(None)),'Z1'])
+            f = interp1d(xx,at,kind='cubic',fill_value='extrapolate') #a values
+            f1 = interp1d(xx,Z1,kind='cubic',fill_value='extrapolate') #Z values
+            res.loc[(chems[ii], slice(None)),'M_star'] = f(res.loc[(chems[ii], slice(None)),'xbfav'])\
+            *f1(res.loc[(chems[ii], slice(None)),'xbfav'])*res.loc[(chems[ii], slice(None)),'V_doi']
+            """
             f = interp1d(xx,yy,kind='cubic',fill_value='extrapolate')
             f1 = interp1d(xx,yy,kind='linear',fill_value='extrapolate')#Linear interpolation where cubic fails
             res.loc[(chems[ii], slice(None)),'M_star'] = f(res.loc[(chems[ii], slice(None)),'xf'])\
             - f(res.loc[(chems[ii], slice(None)),'xb'])
-            #check if the cubic interpolation failed (<0), use linear in those place.
+            res.loc[(chems[ii], slice(None)),'M_xf'] = f(res.loc[(chems[ii], slice(None)),'xf']) #Mass at xf, used to determine advection out of the system
+            #check if the cubic interpolation failed (<0), use linear in those places.
             mask = res.loc[(chems[ii], slice(None)),'M_star'] < 0
             if sum(mask) != 0:
-                pdb.set_trace()
+                #pdb.set_trace()
+                #Only replace where cubic failed
                 #res.loc[(chems[ii], mask),'M_star'] = f1(res.loc[(chems[ii],mask),'xf'])\
                 #- f1(res.loc[(chems[ii], mask),'xb'])
+                #Replace everywhere
                 res.loc[(chems[ii], slice(None)),'M_star'] = f1(res.loc[(chems[ii], slice(None)),'xf'])\
                 - f1(res.loc[(chems[ii], slice(None)),'xb'])
-            #US boundary conditions
+                res.loc[(chems[ii], slice(None)),'M_star'] = f1(res.loc[(chems[ii], slice(None)),'xf']) #Mass at xf, used to determine advection out of the system
+        #US boundary conditions
         #Case 1 - both xb and xf are outside the domain. 
-        #This is kind of a dummy simplification, but it only makes a small artefact so w/e. Fix later if there is time
+        #All mass comes in at the influent activity & Z value (set to the first cell)
+        #pdb.set_trace()
         mask = (res.xb == 0) & (res.xf == 0)
         M_us = 0
+        res.loc[:,'inp_mass1'] = 0 #initialize
         if sum(mask) != 0:
-            res[mask].groupby(level = 0)['del_0'].sum()
-            res.loc[mask,'M_star'] = res.bc_us*res.V1[mask]*res.Z1[mask] #Everything in these cells comes from outside of the domain
+            #res[mask].groupby(level = 0)['del_0'].sum()
+            res.loc[mask,'M_star'] = res.bc_us[mask]*params.val.Qin*res.Z1[mask]*res.del_0[mask]#Time to traverse cell * influent
+            #Record mass input from outside system for the water compartment here
+            res.loc[mask,'inp_mass1'] = res.loc[mask,'M_star']
+            #res.loc[mask,'M_star'] = res.bc_us*res.V1[mask]*res.Z1[mask] #Everything in these cells comes from outside of the domain
             M_us = res[mask].groupby(level = 0)['M_star'].sum()
         #Case 2 - xb is out of the range, but xf is in
         #Need to compute the sum of a spatial integral from x = 0 to xf and then the rest is temporal with the inlet
@@ -401,7 +428,9 @@ class FugModel(metaclass=ABCMeta):
             #For this temporal piece, we are going to just make the mass balance between the
             #c1 BCs and this case, which will only ever have one cell as long as Xf(i-1) = xb(i)
             M_t =  params.val.Qin*res.bc_us[slice(None),0]*dt*res.Z1[slice(None),0] - M_us
+            #M_t =  res.bc_us[mask]*params.val.Qin*np.array(res.Z1[slice(None),0])*np.array((dt-delf_test1.shift(1)[mask]))
             res.loc[mask,'M_star'] = np.array(M_x + M_t)
+            res.loc[mask,'inp_mass1'] = np.array(M_t) #Mass from outside system to the water compartment)
         #Case 3 - too close to origin for cubic interpolation, so we will use linear interpolation
         #Not always going to occur, and since slope is a vector dimensions might not agree
         mask = np.isnan(res.M_star)
@@ -410,8 +439,8 @@ class FugModel(metaclass=ABCMeta):
         #Divide out to get back to activity/fugacity entering from advection
         res.loc[:,'a_star'] = res.M_star / res.Z1 / res.V1
         #Error checking, does the advection part work?
-        res.loc[:,'a1_t1'] = res.a_star 
-        """
+        #res.loc[:,'a1_t1'] = res.a_star 
+        #"""
         
         #Finally, we can set up & solve our implicit portion!
         #This is based on the methods of Manson and Wallis (2000) and Kilic & Aral (2009)
@@ -429,39 +458,40 @@ class FugModel(metaclass=ABCMeta):
         #Middle (m) term acting on x(i) - this will be subracted in the matrix (-m*ai)
         #Upstream and downstream BCs have been dealt with in the b and f terms
         res.loc[:,'m'] = res.f+res.b+dt*res.DT1+res.V1*res.Z1
-        #These will make the matrix. For each spacial step, i, there will be
+        #These will make the matrix. For each spatial step, i, there will be
         #numc activities that we will track. So, in a system of water, air and sediment
         #you would have aw1, as1, aa1, aw2,as2,aa3...awnumc,asnumc,aanumc, leading to a matrix
-        #of numc * i x numc * i in dimension.
+        #of numc * i x numc * i in dimension. Then we stack these on the first axis
+        #so that our matrix is numchem x numx*numc * numx*numc
         #Initialize transport matrix and RHS vector (inp)
-        mat = np.zeros([numx*numc,numx*numc,numchems])
-        inp = np.zeros([numx*numc,numchems])
+        mat = np.zeros([numchems,numx*numc,numx*numc])
+        inp = np.zeros([numchems,numx*numc])
         #FILL THE MATRICES
         #First, define where the matrix values will go.
         m_vals = np.arange(0,numx*numc,numc)
         b_vals = np.arange(numc,numx*numc,numc)
         #Then, we can set the ADRE terms. Since there will always be three no need for a loop.
-        mat[m_vals,m_vals,:] = -np.array(res.m).reshape(numchems,numx).swapaxes(0,1)
-        mat[b_vals,m_vals[0:numx-1],:] = np.array(res.loc[(slice(None),slice(1,numx)),'b']).reshape(numchems,numx-1).swapaxes(0,1)
-        mat[m_vals[0:numx-1],b_vals,:] = np.array(res.loc[(slice(None),slice(0,numx-2)),'f']).reshape(numchems,numx-1).swapaxes(0,1)
+        mat[:,m_vals,m_vals] = -np.array(res.m).reshape(numchems,numx)
+        mat[:,b_vals,m_vals[0:numx-1]] = np.array(res.loc[(slice(None),slice(1,numx)),'b']).reshape(numchems,numx-1)
+        mat[:,m_vals[0:numx-1],b_vals] = np.array(res.loc[(slice(None),slice(0,numx-2)),'f']).reshape(numchems,numx-1)
         #Set up the inputs in the advective cell, without anything from the location specific inputs
-        inp[m_vals,:] = np.array(-res.M_star).reshape(numchems,numx).swapaxes(0,1)
+
         #Next, set D values and inp values. This has to be in a loop as the number of compartments might change
         j,k = [0,0]
         for j in range(0,numc): #j is the row index
             inp_val = 'inp_' +str(j+1)
             if inp_val not in res.columns: #If no inputs given assume zero
                 res.loc[:,inp_val] = 0
-            #For the other cells the input is the source term less the value at time n
-            if j == 0:
-                pass
-            else:
+            if j == 0: #Water compartment is M* and any external inputs
+                inp[:,m_vals] = np.array(-res.M_star).reshape(numchems,numx) - dt * np.array(res.loc[:,'inp_1']).reshape(numchems,numx)
+                res.loc[:,'inp_mass1'] += - dt * np.array(res.loc[:,'inp_1']) #Mass from inputs to water compartment
+            else: #For the other compartments the input is the source term less the value at time n
                 a_val, V_val, Z_val = 'a'+str(j+1) + '_t', 'V' + str(j+1), 'Z' + str(j+1)
-                #RHS of the equation is the source less the mass at time n for compartment j
-                inp[m_vals+j,:] += - dt * np.array(res.loc[:,inp_val]).reshape(numchems,numx).swapaxes(0,1)\
-                - np.array(res.loc[:,a_val]).reshape(numchems,numx).swapaxes(0,1)\
-                *np.array(res.loc[:,Z_val]).reshape(numchems,numx).swapaxes(0,1)\
-                *np.array(res.loc[:,V_val]).reshape(numchems,numx).swapaxes(0,1)
+                #RHS of the equation is the source plus the mass at time n for compartment j
+                inp[:,m_vals+j] += - dt * np.array(res.loc[:,inp_val]).reshape(numchems,numx)\
+                - np.array(res.loc[:,a_val]).reshape(numchems,numx)\
+                *np.array(res.loc[:,Z_val]).reshape(numchems,numx)\
+                *np.array(res.loc[:,V_val]).reshape(numchems,numx)
             for k in range(0,numc): #k is the column index
                 if (j == k): 
                     if j == 0:#Skip DT1 as it is in the m value
@@ -472,47 +502,48 @@ class FugModel(metaclass=ABCMeta):
                         if np.any(res.loc[:,D_val]< 0):
                             pass
                         res.loc[:,D_valm] = dt*res.loc[:,D_val] + res.loc[:,V_val]*res.loc[:,Z_val]
-                        mat[m_vals+j,m_vals+j,:] = -np.array(res.loc[:,D_valm]).reshape(numchems,numx).swapaxes(0,1)
+                        mat[:,m_vals+j,m_vals+j] = -np.array(res.loc[:,D_valm]).reshape(numchems,numx)
                 else: #Place the intercompartmental D values
                     D_val = 'D_' +str(k+1)+str(j+1)
                     if np.any(res.loc[:,D_val]< 0):
                         pass
-                    mat[m_vals+j,m_vals+k,:] = dt * np.array(res.loc[:,D_val]).reshape(numchems,numx).swapaxes(0,1)
+                    mat[:,m_vals+j,m_vals+k] = dt * np.array(res.loc[:,D_val]).reshape(numchems,numx)
         #Upstream boundary - need to add the diffusion term. DS boundary is dealt with already
-        inp[0,:] += -res.b[slice(None),0]*res.bc_us[slice(None),0]
-        #Now, we will solve the matrix for each compound in turn (might be possible to do simultaneously)
-        ii = 0
-        outs = np.zeros([numx,numc,numchems])
-        for ii in range(numchems):
-            matsol = np.linalg.solve(mat[:,:,ii],inp[:,ii]) #Old code, gives negative values
-
+        inp[:,0] += -res.b[slice(None),0]*(res.bc_us[slice(None),0] - res.a_star[slice(None),0]) #Activity gradient is ~bc_us - a_star
+        res.loc[(slice(None),0),'inp_mass1']  += np.array(res.b[slice(None),0]*(res.bc_us[slice(None),0] - res.a_star[slice(None),0])) #Mass added from diffusion
+        #Now, we will solve the matrix for each compound simultaneously (each D-matrix and input is stacked by compound)
+        matsol = np.linalg.solve(mat,inp)
+        #Error checking - Check solutions ~ inputs
+        #np.dot(mat[0],matsol[0]) - inp[0]
+        #Loop through the compartments and put the output values into our output res dataframe
+        pdb.set_trace
+        for j in range(numc):
+            a_val, inp_mass = 'a'+str(j+1) + '_t1','inp_mass'+str(j+1)
+            res.loc[:,a_val] = matsol.reshape(numx*numchems,numc)[:,j]
+            if j is not 0:#Skip water compartment
+                res.loc[:,inp_mass] = dt*res.loc[:,inp_val]
+            if sum(res.loc[:,a_val]<0) >0: #If solution gives negative values set to zero
+                #pdb.set_trace()
+                res.loc[res.loc[:,a_val]<0,a_val] = 0 #Not conservative, but let's see what happens
+        """                
         #Code to prevent negative values, from https://stackoverflow.com/questions/36968955/numpy-linear-system-with-specific-conditions-no-negative-solutions
-            #if sum(matsol<0) > 0:
-            #    A = mat[:,:,ii]
-            #    b = inp[:,ii]
-            #    n = len(b)
-            #    fun = lambda x: np.linalg.norm(np.dot(A,x)-b)
-            #    sol = minimize(fun, np.zeros(n), method='L-BFGS-B', bounds=[(0.,None) for x in range(n)])
-            #    matsol2 = matsol #for tracking
-            #    matsol = sol['x']
+            if sum(matsol<0) > 0:
+                A = mat[:,:,ii]
+                b = inp[:,ii]
+                n = len(b)
+                fun = lambda x: np.linalg.norm(np.dot(A,x)-b)
+                sol = minimize(fun, np.zeros(n), method='L-BFGS-B', bounds=[(0.,None) for x in range(n)])
+                matsol2 = matsol #for tracking
+                matsol = sol['x']
             #Results from the time step for each compartment, giving the activity at time t+1
-
-            outs[:,:,ii] = matsol.reshape(numx,numc) #sol['x']
+            #outs[:,:,ii] = matsol.reshape(numx,numc) #sol['x']
         #Reshape outs to match the res file
         #Error checking
         #if sum(sum(sum(outs<0))) >0:
         #    WHY = 'GODDANGIT'
         #    xx = sum(sum(mat<0))
         #    xy = sum(sum(inp>0))
-        outs = outs.swapaxes(1,2).swapaxes(0,1).reshape(numx*numchems,numc)
-
-        #Loop through the compartments and put the output values into our output res dataframe
-        for j in range(numc):
-            a_val = 'a'+str(j+1) + '_t1'
-            res.loc[:,a_val] = outs[:,j]
-            if sum(res.loc[:,a_val]<0) >0:
-                pdb.set_trace()
-                xxx = 1
+                
             
         #xxx = 1   
         """
