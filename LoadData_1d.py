@@ -14,19 +14,31 @@ import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import pdb
+import math
 #plt.style.use("ggplot")
 #from data_1d import makeic
 
 params = pd.read_excel('params_1d.xlsx',index_col = 0) 
-#locsumm = pd.read_excel('Oro_Loma.xlsx',index_col = 0) 
 locsumm = pd.read_excel('Oro_Loma.xlsx',index_col = 0) 
-#chemsumm = pd.read_excel('OPECHEMSUMM.xlsx',index_col = 0)
-chemsumm = pd.read_excel('PROBLEMCHEMSUMM.xlsx',index_col = 0)
+#locsumm = pd.read_excel('Oro_Loma_1.xlsx',index_col = 0) 
+#chemsumm = pd.read_excel('OPE_only_CHEMSUMM.xlsx',index_col = 0)
+chemsumm = pd.read_excel('OPECHEMSUMM.xlsx',index_col = 0)
+#emsumm = pd.read_excel('PROBLEMCHEMSUMM.xlsx',index_col = 0)
 #chemsumm = pd.read_excel('EHDPPCHEMSUMM.xlsx',index_col = 0)
 timeseries = pd.read_excel('timeseries_test2.xlsx')
 #Truncate timeseries if you want to run fewer
-totalt = 10
-timeseries = timeseries[0:totalt+1]
+#pdb.set_trace()
+totalt = 1000
+if totalt <= len(timeseries):
+    timeseries = timeseries[0:totalt+1]
+else:
+    while math.ceil(totalt/len(timeseries)) > 1.0:
+        timeseries = timeseries.append(timeseries)
+        totalt = totalt - len(timeseries) 
+    timeseries = timeseries.append(timeseries[0:totalt])
+    timeseries.loc[:,'time'] = np.arange(1,len(timeseries)+1,timeseries.time.iloc[1]-timeseries.time.iloc[0])
+    timeseries.index = range(len(timeseries))
+    
 numc = 8
 pp = None
 test = BCBlues_1d(locsumm,chemsumm,params,8)
@@ -50,7 +62,7 @@ plot = plt.plot(timeseries.time, res_time.loc[(slice(None),'EHDPP',0),'a1_t1'],\
    timeseries.time, res_time.loc[(slice(None),'EHDPP',9),'a1_t1'], 'g--')
 #Seaborn
 #Set plotting parameters
-plttime = 99
+plttime = 50
 yvar = 'a1_t1'
 pltdata = res_time.loc[(plttime,slice(None),slice(None)),slice(None)]
 #res_time.loc[(plttime,slice(None),slice(None)),slice(None)] #Just at plttime

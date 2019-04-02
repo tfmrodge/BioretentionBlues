@@ -43,18 +43,25 @@ class BCBlues_1d(FugModel):
         if dx == None:
             dx = params.val.dx
         #Smaller cells at influent - testing turn on/off
+        #db.set_trace()
         samegrid = True
         if samegrid == True:
             res = pd.DataFrame(np.arange(0.0+dx/2.0,L,dx),columns = ['x'])
+            res.loc[:,'dx'] = dx
         else:
+            dx_alpha = 0.5
             dx_in = params.val.dx/10
+            res = pd.DataFrame(np.arange(0.0+dx_in/2.0,L/10.0,dx_in),columns = ['dx'])
+            
             res = pd.DataFrame(np.arange(0.0+dx_in/2.0,L/10.0,dx_in),columns = ['x'])
-            res = res.append(pd.DataFrame(np.arange(res.iloc[-1,0]+dx_in/2,L,dx),columns = ['x']))
+            lenin = len(res) #Length of the dataframe at the inlet resolution
+            res = res.append(pd.DataFrame(np.arange(res.iloc[-1,0]+dx_in/2+dx/2,L,dx),columns = ['x']))
             res = pd.DataFrame(np.array(res),columns = ['x'])
+            res.loc[0:lenin-1,'dx'] = dx_in
+            res.loc[lenin:,'dx'] = dx
         #pdb.set_trace()
-        #Control volume length - x is in centre of each cell.
-        res.loc[:,'dx'] = res['x'].diff()/2+res['x'].shift(-1).diff()/2
-        res.loc[0,'dx'] = res.x[0] + res.dx[1]/2
+        #Control volume length dx - x is in centre of each cell.
+
         res.iloc[-1,1] = res.iloc[-2,1]/2+L-res.iloc[-1,0]
         #Integer cell number is the index, columns are values, 'x' is the centre of each cell
         #res = pd.DataFrame(np.arange(0+dx/2,L,dx),columns = ['x'])
@@ -281,7 +288,7 @@ class BCBlues_1d(FugModel):
         res.loc[:,'kspn'] = 1/(1/params.val.kcw + 1/res.kmvn) #Neutral MTC between soil and plant. Assuming that there is a typo in Trapp (2000)
         res.loc[:,'kspi'] = 1/(1/params.val.kcw + 1/res.kmvi)
         #Correct for kmin = 10E-10 m/s for ions
-        kspimin = 10e-10*3600
+        kspimin = (10e-10)*3600
         res.loc[res.kspi<kspimin,'kspi'] = kspimin
         #Air side MTC for veg (from Diamond 2001)
         delta_blv = 0.004 * ((0.07 / params.val.WindSpeed) ** 0.5) #leaf boundary layer depth, windsped in m/s
@@ -513,7 +520,7 @@ class BCBlues_1d(FugModel):
         #Shoot growth - Modelled as first order decay
         res.loc[:,'D_sg'] = params.val.k_sg*res.V3*res.Z3
         res.loc[:,'D_35'] = res.D_d35
-        res.loc[:,'D_53'] = res.D_d35 #Could add other depostion but doesn't seem worth it =- might eliminate air compartment
+        res.loc[:,'D_53'] = 0 #Could add other depostion but doesn't seem worth it =- might eliminate air compartment
         res.loc[:,'D_34'] = res.D_cd + res.D_we + res.D_lf
         res.loc[:,'D_43'] = 0 #Could add rainsplash maybe? 
         res.loc[:,'D_38'] = 0 #Talk to Angela about this direction maybe
@@ -557,7 +564,7 @@ class BCBlues_1d(FugModel):
         res.loc[:,'D_48'] = 0
         
         #5 Air - shoots, topsoil
-        res.loc[:,'DT5'] = res.D_54 + res.D_53 +res.Dadv5+res.Dr5
+        res.loc[:,'DT5'] = res.D_54 + res.D_53 +res.Dadv5 + res.Dr5
         #Air does not go to water (1), subsoil (2), roots (6-8). Explicit for error checking.
         res.loc[:,'D_51'] = 0
         res.loc[:,'D_52'] = 0
@@ -590,7 +597,7 @@ class BCBlues_1d(FugModel):
         res.loc[:,'D_rg7'] = params.val.k_rg*res.V7*res.Z7 #root growth
         res.loc[:,'D_78'] = res.D_et7
         res.loc[:,'D_87'] = 0
-        res.loc[:,'DT7'] = res.D_72 + res.D_74 + res.D_78 + res.D_rg7 +res.Dadv7+res.Dr7 #Total D val
+        res.loc[:,'DT7'] = res.D_72 + res.D_74 + res.D_76 + res.D_78 + res.D_rg7 +res.Dadv7+res.Dr7 #Total D val
         #Xylem does not go to water (1), shoots (3), air (5). Explicit for error checking.
         res.loc[:,'D_71'] = 0
         res.loc[:,'D_73'] = 0

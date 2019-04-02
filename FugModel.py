@@ -81,7 +81,7 @@ class FugModel(metaclass=ABCMeta):
         as well as a column named compound num_compartments (numc) defines the size of the matrix
         """
         #Determine number of chemicals
-        pdb.set_trace()
+        #pdb.set_trace()
         numc  = num_compartments
         try:
             numchems = len(ic.Compound)
@@ -377,6 +377,7 @@ class FugModel(metaclass=ABCMeta):
         chems = res.index.levels[0]
         for ii in range(numchems):
             #Added the zero at the front as M_n(0) = 0
+            
             xx = np.append(0,res.loc[(chems[ii], slice(None)),'dx'].cumsum())#forward edge of each cell
             yy = np.append(0,res.loc[(chems[ii], slice(None)),'M_n'])
             """
@@ -439,9 +440,8 @@ class FugModel(metaclass=ABCMeta):
         #Divide out to get back to activity/fugacity entering from advection
         res.loc[:,'a_star'] = res.M_star / res.Z1 / res.V1
         #Error checking, does the advection part work?
-        #res.loc[:,'a1_t1'] = res.a_star 
-        #"""
-        
+        res.loc[:,'a1_t1'] = res.a_star 
+                
         #Finally, we can set up & solve our implicit portion!
         #This is based on the methods of Manson and Wallis (2000) and Kilic & Aral (2009)
         #Define the spatial weighting term (P) 
@@ -522,31 +522,13 @@ class FugModel(metaclass=ABCMeta):
             res.loc[:,a_val] = matsol.reshape(numx*numchems,numc)[:,j]
             if j is not 0:#Skip water compartment
                 res.loc[:,inp_mass] = dt*res.loc[:,inp_val]
-            if sum(res.loc[:,a_val]<0) >0: #If solution gives negative values set to zero
-                #pdb.set_trace()
-                res.loc[res.loc[:,a_val]<0,a_val] = 0 #Not conservative, but let's see what happens
-        """                
-        #Code to prevent negative values, from https://stackoverflow.com/questions/36968955/numpy-linear-system-with-specific-conditions-no-negative-solutions
-            if sum(matsol<0) > 0:
-                A = mat[:,:,ii]
-                b = inp[:,ii]
-                n = len(b)
-                fun = lambda x: np.linalg.norm(np.dot(A,x)-b)
-                sol = minimize(fun, np.zeros(n), method='L-BFGS-B', bounds=[(0.,None) for x in range(n)])
-                matsol2 = matsol #for tracking
-                matsol = sol['x']
-            #Results from the time step for each compartment, giving the activity at time t+1
-            #outs[:,:,ii] = matsol.reshape(numx,numc) #sol['x']
-        #Reshape outs to match the res file
-        #Error checking
-        #if sum(sum(sum(outs<0))) >0:
-        #    WHY = 'GODDANGIT'
-        #    xx = sum(sum(mat<0))
-        #    xy = sum(sum(inp>0))
+            if sum(res.loc[:,a_val]<0) >0: #If solution gives negative values flag it
+                pdb.set_trace()
+                
                 
             
         #xxx = 1   
-        """
+        
         return res
 
 
