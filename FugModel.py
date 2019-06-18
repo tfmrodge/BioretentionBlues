@@ -370,7 +370,7 @@ class FugModel(metaclass=ABCMeta):
         res.loc[:,'M_i'] = res.a1_t * res.Z1 * res.V1 #Mass in each cell at time t
         res.loc[:,'M_n'] = res.groupby(level = 0)['M_i'].cumsum() #Cumulative mass
         #res.loc[:,'xbfav'] = (res.xb+res.xf)/2 #Centre of domain of influence
-        res.loc[:,'V_doi'] = (res.xf - res.xb)*res.A1
+        #res.loc[:,'V_doi'] = (res.xf - res.xb)*res.A1
         #Then, we advect one time step. To advect, just shift everything as calculated above.
         #We will use a cubic interpolation. Unfortunately, we have to unpack the data 
         #in order to get this to work.
@@ -379,7 +379,7 @@ class FugModel(metaclass=ABCMeta):
             #Added the zero at the front as M_n(0) = 0
             
             xx = np.append(0,res.loc[(chems[ii], slice(None)),'dx'].cumsum())#forward edge of each cell
-            yy = np.append(0,res.loc[(chems[ii], slice(None)),'M_n'])
+            yy = np.append(0,res.loc[(chems[ii], slice(None)),'M_n']) #Cumulative mass in the system
             """
             #Testing to see if multiplying a and Z better
             xx = np.array(res.loc[(chems[ii], slice(None)),'x'])#Middle
@@ -405,7 +405,7 @@ class FugModel(metaclass=ABCMeta):
                 #Replace everywhere
                 res.loc[(chems[ii], slice(None)),'M_star'] = f1(res.loc[(chems[ii], slice(None)),'xf'])\
                 - f1(res.loc[(chems[ii], slice(None)),'xb'])
-                res.loc[(chems[ii], slice(None)),'M_star'] = f1(res.loc[(chems[ii], slice(None)),'xf']) #Mass at xf, used to determine advection out of the system
+                res.loc[(chems[ii], slice(None)),'M_xf'] = f1(res.loc[(chems[ii], slice(None)),'xf']) #Mass at xf, used to determine advection out of the system
         #US boundary conditions
         #Case 1 - both xb and xf are outside the domain. 
         #All mass comes in at the influent activity & Z value (set to the first cell)
@@ -516,11 +516,12 @@ class FugModel(metaclass=ABCMeta):
         #Error checking - Check solutions ~ inputs
         #np.dot(mat[0],matsol[0]) - inp[0]
         #Loop through the compartments and put the output values into our output res dataframe
-        pdb.set_trace
+        #
         for j in range(numc):
             a_val, inp_mass = 'a'+str(j+1) + '_t1','inp_mass'+str(j+1)
             res.loc[:,a_val] = matsol.reshape(numx*numchems,numc)[:,j]
             if j is not 0:#Skip water compartment
+                pdb.set_trace
                 res.loc[:,inp_mass] = dt*res.loc[:,inp_val]
             if sum(res.loc[:,a_val]<0) >0: #If solution gives negative values flag it
                 pdb.set_trace()

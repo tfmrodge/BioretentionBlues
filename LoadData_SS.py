@@ -34,3 +34,29 @@ test = BCBlues_1d(locsumm,chemsumm,params,8)
 ssdata = res_t[0].groupby(level = 0).sum(axis = 0)
 ssdata.loc[:,'inp_1'] = res_t[0].bc_us[slice(None),0] #Set inputs to upstream equal to upstream boundary condition
 SSouts = test.forward_calc_ss(ssdata,8)
+
+"""
+#Plot activity in the water compartment
+
+#Set plotting parameters
+%matplotlib inline
+plttime = 799
+#yvar = 'a1_t1'
+yvar = 'a/ao'
+res_time.loc[:,'a/ao'] = res_time.loc[:,'a1_t']/res_time.loc[:,'bc_us']
+pltdata = res_time.loc[(plttime,slice('EHDPP','TCEP','TCiPP','TBEP','TDCiPP','TPhP'),slice(None)),slice(None)]
+#Just at plttime
+ylim = [1, 1.5]
+xlim = [0, 50]
+ylabel = 'Activity (a/ain)'
+xlabel = 'Distance from Influent (m)'
+#pltdata = res_time #All times at once
+fig = plt.figure(figsize=(30,15),dpi = 500)
+ax = sns.lineplot(x = 'x', y = yvar, hue = pltdata.index.get_level_values(1),data = pltdata)
+#ax.set_ylim(ylim)
+ax.set_xlim(xlim)
+ax.set_ylabel(ylabel, fontsize=44)
+ax.set_xlabel(xlabel, fontsize=44)
+ax.tick_params(axis='both', which='major', labelsize=36)
+plt.setp(ax.get_legend().get_texts(), fontsize='32')
+"""

@@ -226,8 +226,9 @@ class BCBlues(FugModel):
         The output of this will be a "locsumm" file which can be fed into the rest of the model.
         These calculations do not depend on the contaminant transport calculations.
         
-        This module includes particle mass balances, wher particles are
+        This module includes particle mass balances, where particles are
         advective transfer media for compounds in the model.
+        Particle model based off of 
         Water flow modelling based on Randelovic et al (2016)
         
         locsumm gives the conditions at t(n)
