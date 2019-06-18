@@ -26,7 +26,8 @@ def vant_conv(dU,T2,k1,T1 = 298.15,):
 def arr_conv(Ea,T2,k1,T1 = 298.15,):
     """Arrhenius equation conversion of rate reaction constants (k) from T1 to T2 (K)
     The default value for T1 is 298.15K. Activation energy should be in J. The 
-    result (res) will be k2 at . This will work on vectors as well as scalars
+    result (res) will be k2 at T2. This will work on vectors as well as scalars
+    Units of k can be anything, as it is multiplied by a unitless quantity
     """
     R = 8.314 #J/mol/K
     res =  k1 * np.exp((Ea / R) * (1 / T1 - 1 / T2))

@@ -4,8 +4,53 @@ Created on Fri Feb  1 10:38:36 2019
 
 @author: Tim Rodgers
 """
+from BCBlues_1d import BCBlues_1d
 import pdb
-#pdb.set_trace()
+import pandas as pd
+import numpy as np
+pdb.set_trace()
+#Calculate porosity required to give a target residence time for the system
+#res = res_t[0]
+#res.groupby(level = 0)['del_0'].sum()
+#Load datafiles
+timeseries = pd.read_excel('timeseries_test2.xlsx')
+chemsumm = pd.read_excel('OPE_only_CHEMSUMM.xlsx',index_col = 0)
+params = pd.read_excel('params_1d.xlsx',index_col = 0) 
+locsumm = pd.read_excel('Oro_Loma_5cm topsoil.xlsx',index_col = 0) 
+totalt = 1
+timeseries = timeseries[0:totalt+1]
+
+
+#initialize variables
+HRT_targ = 14*24 #14 days in hour, what we want HRT to be
+outs = pd.DataFrame(columns = ['Porosity','thetam','HRT']) #Hydraulic residence time
+porosity = locsumm.loc['Water','Porosity']#Initial test porosity
+thetam = params.val.thetam #Initial test mobile fraction of water
+HRT = 261.24589
+outs.loc[0,:] = porosity,thetam,HRT
+
+#switch = 'porosity'
+switch = 'thetam'
+counter = 0
+while HRT_targ > HRT:
+    if switch == 'porosity': #To find optimal porosity
+        porosity += 0.01
+        outs.loc[counter,'Porosity'] = locsumm.loc['Water','Porosity'] = porosity
+        locsumm.loc['SubSoil','Porosity'] = 1 - porosity
+    else:
+        thetam += 0.01
+        outs.loc[counter,'thetam'] = params.loc['thetam','val'] = thetam    
+    numc = 8
+    pp = None
+    test = BCBlues_1d(locsumm,chemsumm,params,8)
+    res_t, res_time = test.run_it(locsumm,chemsumm,params,numc,pp,timeseries)
+    res = res_t[0]
+    HRT = res.groupby(level = 0)['del_0'].sum()['EHDPP']
+    outs.loc[counter,'HRT'] = HRT
+    counter += 1
+    
+
+"""
 time = 0
 numc=1
 dt = 1
@@ -30,6 +75,7 @@ Ms = np.array(res.loc[(slice(None),lastcell),'Mcumtot_t'])
 Min = timeseries.Qin[time]*res.bc_us[slice(None),0]*dt*res.Z1[slice(None),0]
 delM = Min-Ms
 Mout = timeseries.Qout[time]*res.Z1[0]*res.Z1[0]*dt*res.bc_us[time]
+"""
 
 """
 yvar = 'Mcumtot_t'
