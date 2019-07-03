@@ -397,6 +397,11 @@ class FugModel(metaclass=ABCMeta):
             res.loc[(chems[ii], slice(None)),'M_xf'] = f(res.loc[(chems[ii], slice(None)),'xf']) #Mass at xf, used to determine advection out of the system
             #check if the cubic interpolation failed (<0), use linear in those places.
             mask = res.loc[(chems[ii], slice(None)),'M_star'] < 0
+            if sum(mask) == 0: #Override with linear to see if this is causing instability
+                #YOMAMA = 'FAT'
+                res.loc[(chems[ii], slice(None)),'M_star'] = f1(res.loc[(chems[ii], slice(None)),'xf'])\
+                - f1(res.loc[(chems[ii], slice(None)),'xb'])
+                res.loc[(chems[ii], slice(None)),'M_xf'] = f1(res.loc[(chems[ii], slice(None)),'xf']) 
             if sum(mask) != 0:
                 #pdb.set_trace()
                 #Only replace where cubic failed
@@ -440,7 +445,7 @@ class FugModel(metaclass=ABCMeta):
         #Divide out to get back to activity/fugacity entering from advection
         res.loc[:,'a_star'] = res.M_star / res.Z1 / res.V1
         #Error checking, does the advection part work?
-        res.loc[:,'a1_t1'] = res.a_star 
+        #res.loc[:,'a1_t1'] = res.a_star 
                 
         #Finally, we can set up & solve our implicit portion!
         #This is based on the methods of Manson and Wallis (2000) and Kilic & Aral (2009)
@@ -526,24 +531,103 @@ class FugModel(metaclass=ABCMeta):
             if sum(res.loc[:,a_val]<0) >0: #If solution gives negative values flag it
                 pdb.set_trace()
                 
-                
-            
         #xxx = 1   
-        
+         
         return res
 
 
-    def forward_step_uss(self,ic,num_compartments,dt):
+    def forward_step_euler(self,ic,params,num_compartments,dt):
         """ Perform a forward calculation step to determine model unsteady-state fugacities
-        based on input emissions. Input calcs need to include inp(t+1), DTi(t+1),
+        based on input emissions. Input calcs need to include ic(t+1), DTi(t+1),
         and D_ij(t+1) for each compartment, mass M(n), as well as a column named
         compound. num_compartments (numc) defines the size of the matrix. 
         From Csizar, Diamond and Thibodeaux (2012) DOI 10.1016/j.chemosphere.2011.12.044
         Possibly this doesn't belong in the parent class, to use it needs to be called
         in a loop which would be in a child classes method.
         """
-        pass
+        #pdb.set_trace()
+        #Set up and solve a single box-model Level IV multimedia model
+        res = ic
+        numc = num_compartments
+        chems = res.index.levels[0]
+        numchems = len(chems)
+        #Make the matrix. We have numchem x (numc x numc) activities to solve for
+        #Initialize transport matrix and RHS vector (inp)
+        mat = np.zeros([numchems,numc,numc])
+        inp = np.zeros([numchems,numc])
+        DT_vals = np.arange(0,numc,numc) # Define where DT values will go
+        #FILL THE MATRICEs
+        #Set D values and inp values. This has to be in a loop as the number of compartments might change
+        j,k = [0,0]
+        for j in range(0,numc): #j is the row index
+            inp_val = 'inp_' +str(j+1)
+            if inp_val not in res.columns: #If no inputs given assume zero
+                res.loc[:,inp_val] = 0
+            #For the other compartments the input is the source term less the value at time n
+            a_val, V_val, Z_val = 'a'+str(j+1) + '_t', 'V' + str(j+1), 'Z' + str(j+1)
+            #RHS of the equation is the source plus the mass at time n for compartment j
+            inp[:,DT_vals+j] +=  np.array(-dt * res.loc[:,inp_val] - res.loc[:,a_val]\
+               *res.loc[:,Z_val]*res.loc[:,V_val]).reshape(numchems,1)
+            for k in range(0,numc): #k is the column index
+                if (j == k): #Modify DT to reflect the differential equation
+                    D_val, D_valm, V_val, Z_val = 'DT' + str(k+1),'DTm' + str(k+1), 'V' + str(k+1), 'Z' + str(k+1)
+                    if np.any(res.loc[:,D_val]< 0): #Error Checking
+                        pass
+                    res.loc[:,D_valm] = dt*res.loc[:,D_val] + res.loc[:,V_val]*res.loc[:,Z_val]
+                    mat[:,DT_vals+j,DT_vals+j] = -np.array(res.loc[:,D_valm]).reshape(numchems,1)
+                else: #Place the intercompartmental D values
+                    D_val = 'D_' +str(k+1)+str(j+1)
+                    if np.any(res.loc[:,D_val]< 0):
+                        pass
+                    mat[:,DT_vals+j,DT_vals+k] = dt * np.array(res.loc[:,D_val]).reshape(numchems,1)
+        #Now, we will solve the matrix for each compound simultaneously (each D-matrix and input is stacked by compound)
+        matsol = np.linalg.solve(mat,inp)
+        #Error checking - Check solutions ~ inputs
+        #np.dot(mat[0],matsol[0]) - inp[0]
+        #Loop through the compartments and put the output values into our output res dataframe
+        #
+        for j in range(numc):
+            a_val, inp_mass = 'a'+str(j+1) + '_t1','inp_mass'+str(j+1)
+            res.loc[:,a_val] = matsol.reshape(numchems,numc)[:,j]
+            res.loc[:,inp_mass] = dt*res.loc[:,inp_val]
+            if sum(res.loc[:,a_val]<0) >0: #If solution gives negative values flag it
+                pdb.set_trace()
+        #xxx = 1
+        return res
     
+    def IVP_matrix(self,ic,num_compartments):
+        """ Set up an initial value problem for da/dt - need to divide through by
+        the volume and the Z value. This is for use with the scipy solve_ivp function
+        https://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.solve_ivp.html
+        
+        Input calcs (ic) need to include , DTi(t+1), D_ij(t+1), volumes and Z v
+        values for each compartment
+        num_compartments (numc) defines the size of the matrix. 
+        """
+        #pdb.set_trace()
+        #Set up and solve a single box-model Level IV multimedia model
+        res = ic
+        numc = num_compartments
+        chems = res.index.levels[0]
+        numchems = len(chems)
+        #Make the matrix. We have numchem x (numc x numc) activities to solve for
+        #Initialize transport matrix and RHS vector (inp)
+        mat = np.zeros([numchems,numc,numc])
+        DT_vals = np.arange(0,numc,numc) # Define where DT values will go
+        #FILL THE MATRICEs
+        #Set D values and inp values. This has to be in a loop as the number of compartments might change
+        j,k = [0,0]
+        for j in range(0,numc): #j is the row index
+            for k in range(0,numc): #k is the column index
+                if (j == k): #DT values 
+                    D_val, V_val, Z_val = 'DT' + str(k+1), 'V' + str(k+1), 'Z' + str(k+1)
+                    mat[:,DT_vals+j,DT_vals+k] = -np.array(res.loc[:,D_val]/\
+                   (res.loc[:,V_val]*res.loc[:,Z_val])).reshape(numchems,1) #Divide by VZ to get the activity
+                else: #Place the intercompartmental D values
+                    D_val, V_val, Z_val = 'D_' +str(k+1)+str(j+1), 'V' + str(k+1), 'Z' + str(k+1)
+                    mat[:,DT_vals+j,DT_vals+k] = np.array(res.loc[:,D_val]/\
+                       (res.loc[:,V_val]*res.loc[:,Z_val])).reshape(numchems,1) #Divide by VZ to get the activity
+        return mat
                 
                 
                 

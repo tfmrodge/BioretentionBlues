@@ -4,6 +4,57 @@ Created on Fri Feb  1 10:38:36 2019
 
 @author: Tim Rodgers
 """
+import numpy as np
+import pdb
+import matplotlib.pyplot as plt
+from scipy.integrate import solve_ivp
+from ode_helpers import state_plotter
+# Define derivative function
+def f(t, y, c):
+    #pdb.set_trace()
+    if t % 24 <= 14:
+        dydt = [c[0,0]*y[0]+c[0,1]*y[1]+c[0,2]*y[2]+c[0,3]*y[3]+c[0,4]*y[4]+c[0,5]*y[5],\
+                c[1,0]*y[0]+c[1,1]*y[1]+c[1,2]*y[2]+c[1,3]*y[3]+c[1,4]*y[4]+c[1,5]*y[5],\
+                c[2,0]*y[0]+c[2,1]*y[1]+c[2,2]*y[2]+c[2,3]*y[3]+c[2,4]*y[4]+c[2,5]*y[5],\
+                c[3,0]*y[0]+c[3,1]*y[1]+c[3,2]*y[2]+c[3,3]*y[3]+c[3,4]*y[4]+c[3,5]*y[5],\
+                c[4,0]*y[0]+c[4,1]*y[1]+c[4,2]*y[2]+c[4,3]*y[3]+c[4,4]*y[4]+c[4,5]*y[5],\
+                c[5,0]*y[0]+c[5,1]*y[1]+c[5,2]*y[2]+c[5,3]*y[3]+c[5,4]*y[4]+c[5,5]*y[5]]
+    else:
+        dydt = [c1[0,0]*y[0]+c1[0,1]*y[1]+c1[0,2]*y[2]+c1[0,3]*y[3]+c1[0,4]*y[4]+c1[0,5]*y[5],
+                c1[1,0]*y[0]+c1[1,1]*y[1]+c1[1,2]*y[2]+c1[1,3]*y[3]+c1[1,4]*y[4]+c1[1,5]*y[5],
+                c1[2,0]*y[0]+c1[2,1]*y[1]+c1[2,2]*y[2]+c1[2,3]*y[3]+c1[2,4]*y[4]+c1[2,5]*y[5],
+                c1[3,0]*y[0]+c1[3,1]*y[1]+c1[3,2]*y[2]+c1[3,3]*y[3]+c1[3,4]*y[4]+c1[3,5]*y[5],
+                c1[4,0]*y[0]+c1[4,1]*y[1]+c1[4,2]*y[2]+c1[4,3]*y[3]+c1[4,4]*y[4]+c1[4,5]*y[5],
+                c1[5,0]*y[0]+c1[5,1]*y[1]+c1[5,2]*y[2]+c1[5,3]*y[3]+c1[5,4]*y[4]+c1[5,5]*y[5]]
+    return dydt
+
+tspan =  np.arange(0,5000,1)
+compound = 5
+yinit = [tester.a1_t[compound],0,0,0,0,0]
+#ryinit = -1*inp[compound,:]
+c = mat[compound,:,:] #For one compound
+c1 = mat1[compound,:,:]
+
+# Solve differential equation
+
+sol = solve_ivp(lambda t, y: f(t, y, c), 
+                [tspan[0], tspan[-1]], yinit,method = 'Radau', t_eval=tspan)
+
+# Plot states
+state_plotter(sol.t, sol.y, 1)
+
+#Check the mass balance
+numc = 6
+compname = res_t[0].index.get_level_values(0)
+mass_bal = np.zeros([1,sol.y.shape[1]])
+mass_t = np.zeros([sol.y.shape[0]+1,sol.y.shape[1]])
+for j in range(numc):
+            Vj,Zj, inp_mass = 'V'+str(j+1),'Z'+str(j+1),'inp_mass'+str(j+1)
+            mass_t[j,:] = sols[compname].y[j,:]*np.array(res.loc[compname,Vj]*res.loc[compname,Zj])
+mass_t[numc,:]= mass_t.sum(axis = 0)
+mass_bal = np.diff(mass_t[numc,:])
+
+"""
 from BCBlues_1d import BCBlues_1d
 import pdb
 import pandas as pd
@@ -48,7 +99,7 @@ while HRT_targ > HRT:
     HRT = res.groupby(level = 0)['del_0'].sum()['EHDPP']
     outs.loc[counter,'HRT'] = HRT
     counter += 1
-    
+"""
 
 """
 time = 0
