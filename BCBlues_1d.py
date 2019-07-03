@@ -89,11 +89,10 @@ class BCBlues_1d(FugModel):
         f_dts = interp1d(oro_x,oro_dts,'linear') #Function to define topsoil depth 
         res.loc[:,'depth_ss'] = f_dss(res.x)#Depth of the subsoil
         res.loc[:,'depth_ts'] = f_dts(res.x)#Depth of the topsoil
-        res.loc[:,'width_CV'] = locsumm.Width[0] #all control volumes have the same width
         #Include immobile phase water content, so that Vw is only mobile phase & V2 includes immobile phase
         #Areas for each compartment are defined as the cross sectional "flow area"
-        res.loc[:,'A1'] = res.width_CV * res.depth_ss * res.porosity1 * params.val.thetam
-        res.loc[:,'A2'] =  res.width_CV * res.depth_ss * (res.porosity2 + res.porosity1*(1-params.val.thetam))
+        res.loc[:,'A1'] = locsumm.Width[0] * res.depth_ss * res.porosity1 * params.val.thetam
+        res.loc[:,'A2'] =  locsumm.Width[0] * res.depth_ss * (res.porosity2 + res.porosity1*(1-params.val.thetam))
         res.loc[:,'v1'] = res.Q1/res.A1 #velocity [L/T] at every x - velocity is eq
         params.loc['vin','val'] = params.val.Qin/(res.A1[0])
         params.loc['vout','val'] = params.val.Qout/(res.A1[0])
@@ -102,7 +101,7 @@ class BCBlues_1d(FugModel):
         #res.loc[res.x<2.1336,'depth_ts'] = 0 #No topsoil compartment in the first 7 feet
         #res.loc[res.x>30.7848,'depth_ts'] = 0.6096-(res.x-30.7848)*(0.5/47) #Topsoil tapers in bottom third from 2' to 1.5'
         #res.loc[res.x>45.1104,'depth_ts'] = 0 #Bottom 2' is just gravel drain
-        res.loc[:,'A4'] = res.width_CV * res.depth_ts
+        res.loc[:,'A4'] = locsumm.Width[0] * res.depth_ts
         #Now loop through the columns and set the values
         #pdb.set_trace()
         for j in range(numc):
@@ -136,7 +135,7 @@ class BCBlues_1d(FugModel):
         #with the same radius. SA = pi r² 
         res.loc[:,'A62'] = (1-params.val.froot_top) * params.val.Aroot*locsumm.Width[0]*res.dx #Area of roots in direct contact with subsoil
         res.loc[:,'A64'] = params.val.froot_top * params.val.Aroot*locsumm.Width[0]*res.dx #Area of roots in contact with topsoil
-        res.loc[:,'A4V'] = res.width_CV*res.dx #Vertical direction area of the topsoil compartment
+        res.loc[:,'A4V'] = locsumm.Width[0]*res.dx #Vertical direction area of the topsoil compartment
         #Shoot area based off of leaf area index (LAI) 
         res.loc[:,'A35'] = params.val.LAI*res.dx*locsumm.Width[0]
         res.loc[res.depth_ts==0,'A4V'] = 0
@@ -271,7 +270,7 @@ class BCBlues_1d(FugModel):
         #Roots&shoots based on Kslw, air on Kqa
         res.loc[:,'Kd3'] = vant_conv(res.dUslw,res.temp3,res.loc[:,'foc3'].mul(10**chemsumm.LogKslW, level = 0))
         res.loc[:,'Kdi3'] = res.loc[:,'Kd3'] #Fix later if it is different
-        res.loc[:,'Kd5'] = vant_conv(res.dUoa,res.temp5,res.loc[:,'foc5'].mul(10**chemsumm.LogKqa, level = 0))
+        res.loc[:,'Kd5'] = vant_conv(res.dUoa,res.temp5,res.loc[:,'foc5'].mul(10**chemsumm.LogKqa, level = 0)) #Air
         res.loc[:,'Kdi5'] = res.loc[:,'Kd5'] #Fix later if it is different
         res.loc[:,'Kd6'] = vant_conv(res.dUslw,res.temp3,res.loc[:,'foc6'].mul(10**chemsumm.LogKslW, level = 0))
         res.loc[:,'Kdi6'] = res.loc[:,'Kd6'] #Fix later if it is different
@@ -293,16 +292,16 @@ class BCBlues_1d(FugModel):
         else:#If no HL for vegetation specified, assume 0.1 * wat HL - based on Wan (2017) wheat plants?
             #res.loc[:,'rrxn3'] = res['dummy'].mul(np.log(2)/chemsumm.WatHL,level = 0)/3600*1e6 #Testing shorter HL
             res.loc[:,'rrxn3'] = res['dummy'].mul(np.log(2)/(chemsumm.WatHL*0.1),level = 0)
-        res.loc[:,'rrxn3'] = arr_conv(params.val.Ea,res.temp3,res.rrxn3) #Shoots
         res.loc[:,'rrxn6'] = arr_conv(params.val.Ea,res.temp6,res.rrxn3) #RootBody
         res.loc[:,'rrxn7'] = arr_conv(params.val.Ea,res.temp7,res.rrxn3) #RootXlem
         res.loc[:,'rrxn8'] = arr_conv(params.val.Ea,res.temp8,res.rrxn3) #Root Cylinder
+        res.loc[:,'rrxn3'] = arr_conv(params.val.Ea,res.temp3,res.rrxn3) #Shoots
         #4 Topsoil
         res.loc[:,'rrxn4'] = res['dummy'].mul(np.log(2)/chemsumm.SoilHL,level = 0)
         res.loc[:,'rrxn4'] = arr_conv(params.val.Ea,res.temp4,res.rrxn4)
         #5 Air (air_rrxn /s)
         res.loc[:,'rrxn5'] = res['dummy'].mul(chemsumm.AirOHRateConst, level = 0)  * params.val.OHConc    
-        res.loc[:,'rrxn5'] = arr_conv(params.val.EaAir,res.temp5,res.rrxn4)
+        res.loc[:,'rrxn5'] = arr_conv(params.val.EaAir,res.temp5,res.rrxn5)
         #Air Particles (airq_rrxn) use 10% of AirOHRateConst if not present
         if 'AirQOHRateConst' not in res.columns:
             res.loc[:,'airq_rrxn'] = 0.1 * res.rrxn1
@@ -455,7 +454,7 @@ class BCBlues_1d(FugModel):
         res.loc[:,'Zi6'] = res.fwat6*(res.Zwi_6) + res.Zqi_6
         res.loc[:,'Zn6'] = res.fwat6*(res.Zwn_6) + res.Zqn_6 + res.fair6 * res.Kaw6 
         res.loc[:,'Zw6'] = res.fwat6*(res.Zwi_6) + res.fwat6*(res.Zwn_6)
-        res.loc[:,'Z6'] = res.Zi3 + res.Zn3
+        res.loc[:,'Z6'] = res.Zi6 + res.Zn6
         
         #7 Root xylem
         res.loc[:,'Zi7'] = res.fwat7*(res.Zwi_7) + res.Zqi_7
@@ -520,22 +519,22 @@ class BCBlues_1d(FugModel):
         #Soil-root body
         res.loc[:,'Dsr_n2'] = res.A62*(res.kspn*res.Zwn_2)
         res.loc[:,'Dsr_i2'] = res.A62*(res.kspi*res.Zwi_2*res.N2/(np.exp(res.N2)-1))
-        res.loc[:,'D_apo2'] = (1-params.val.froot_top)*(params.val.f_apo)*(res.Zw2) #Apoplast bypass
+        res.loc[:,'D_apo2'] = res.Qet2*(params.val.f_apo)*(res.Zw2) #Apoplast bypass
         res.loc[:,'Drs_n2'] = res.A62*(res.kspn*res.Zwn_6)
         res.loc[:,'Drs_i2'] = res.A62*(res.kspi*res.Zwi_6*res.N6/(np.exp(res.N6)-1))
         res.loc[mask,'Dsr_i2'], res.loc[mask,'Drs_i2'] = 0,0 #Set neutral to zero
         res.loc[:,'D_rd62'] = (1-params.val.froot_top)*res.V6 * res.Z6 * params.val.k_rd  #Root death
         res.loc[:,'D_rd72'] = (1-params.val.froot_top)*res.V7 * res.Z7 * params.val.k_rd  #Root death
         res.loc[:,'D_rd82'] = (1-params.val.froot_top)*res.V8 * res.Z8 * params.val.k_rd  #Root death
-        res.loc[:,'D_26'] = res.Dsr_n2+res.Dsr_i2+res.D_apo2
+        res.loc[:,'D_26'] = res.Dsr_n2+res.Dsr_i2
         res.loc[:,'D_62'] = res.Drs_n2+res.Drs_i2+res.D_rd62
+        res.loc[:,'D_27'] = res.D_apo2
         res.loc[:,'D_72'] = res.D_rd72
         res.loc[:,'D_82'] = res.D_rd82
-        res.loc[:,'DT2'] = res.D_21+res.D_24+res.D_26+res.Dadv2+res.Dr2 #Total D value
+        res.loc[:,'DT2'] = res.D_21+res.D_24+res.D_26+res.D_27+res.Dadv2+res.Dr2 #Total D value
         #Subsoil does not go to with shoots (3), air (5), roots (7-8). Explicit for error checking.
         res.loc[:,'D_23'] = 0
         res.loc[:,'D_25'] = 0
-        res.loc[:,'D_27'] = 0
         res.loc[:,'D_28'] = 0
         
         #3 Shoots - interacts with central cylinder, air, topsoil
@@ -577,24 +576,24 @@ class BCBlues_1d(FugModel):
         #Topsoil-roots, same as for subsoil
         res.loc[:,'N4'] = res.chemcharge*params.val.E_plas*params.val.F/(params.val.R*res.temp4)
         #Soil-root body
-        res.loc[:,'Dsr_n4'] = res.A64*(res.kspn*res.Zwn_4)
-        res.loc[:,'Dsr_i4'] = res.A64*(res.kspi*res.Zwi_4*res.N4/(np.exp(res.N4)-1))
-        res.loc[:,'D_apo4'] = params.val.froot_top*(params.val.f_apo)*(res.Zw2) #Apoplast bypass
-        res.loc[:,'Drs_n4'] = res.A64*(res.kspn*res.Zwn_6)
-        res.loc[:,'Drs_i4'] = res.A64*(res.kspi*res.Zwi_6*res.N6/(np.exp(res.N6)-1))
+        res.loc[:,'Dsr_n4'] = res.A64*(res.kspn*res.fwat4*res.Zwn_4)
+        res.loc[:,'Dsr_i4'] = res.A64*(res.kspi*res.fwat4*res.Zwi_4*res.N4/(np.exp(res.N4)-1))
+        res.loc[:,'D_apo4'] = res.Qet4*(params.val.f_apo)*(res.Zw2) #Apoplast bypass
+        res.loc[:,'Drs_n4'] = res.A64*(res.kspn*res.fwat6*res.Zwn_6)
+        res.loc[:,'Drs_i4'] = res.A64*(res.kspi*res.fwat6*res.Zwi_6*res.N6/(np.exp(res.N6)-1))
         res.loc[mask,'Dsr_i4'], res.loc[mask,'Drs_i4'] = 0,0 #Set neutral to zero
         res.loc[:,'D_rd64'] = params.val.froot_top*res.V6 * res.Z6 * params.val.k_rd  #Root death
         res.loc[:,'D_rd74'] = params.val.froot_top*res.V7 * res.Z7 * params.val.k_rd  #Root death
         res.loc[:,'D_rd84'] = params.val.froot_top*res.V8 * res.Z8 * params.val.k_rd  #Root death
-        res.loc[:,'D_46'] = res.Dsr_n4+res.Dsr_i4+res.D_apo4
+        res.loc[:,'D_46'] = res.Dsr_n4+res.Dsr_i4
         res.loc[:,'D_64'] = res.Drs_n4+res.Drs_i4+res.D_rd64
+        res.loc[:,'D_47'] = res.D_apo4
         res.loc[:,'D_74'] = res.D_rd74
         res.loc[:,'D_84'] = res.D_rd84
         res.loc[:,'D_45'] = res.D_d45
         res.loc[:,'D_54'] = res.D_d45 + res.D_wd54 + res.D_qs + res.D_ds
-        res.loc[:,'DT4'] = res.D_41+res.D_42+res.D_43+res.D_45+res.D_46+res.Dadv4+res.Dr4 #Total D val
+        res.loc[:,'DT4'] = res.D_41+res.D_42+res.D_43+res.D_45+res.D_46+res.D_47+res.Dadv4+res.Dr4 #Total D val
         #Topsoil does not go to roots (7-8). Explicit for error checking.
-        res.loc[:,'D_47'] = 0
         res.loc[:,'D_48'] = 0
         
         #5 Air - shoots, topsoil
@@ -609,14 +608,14 @@ class BCBlues_1d(FugModel):
         #6 Root Body - subsoil, xylem, topsoil
         #roots-xylem froot_tip is the fraction of root without secondary epothileum
         res.loc[:,'N7'] = res.chemcharge*params.val.E_plas*params.val.F/(params.val.R*res.temp7)
-        res.loc[:,'Drx_n'] = (params.val.froot_tip)*res.A7*(res.kspn*res.Zwn_6) #A7 is root/xylem interface
-        res.loc[:,'Drx_i'] = (params.val.froot_tip)*res.A7*(res.kspi*res.Zwi_6*res.N2/(np.exp(res.N6)-1))
-        res.loc[:,'Dxr_n'] = (params.val.froot_tip)*res.A7*(res.kspn*res.Zwn_7)
-        res.loc[:,'Dxr_i'] = (params.val.froot_tip)*res.A7*(res.kspi*res.Zwi_7*res.N7/(np.exp(res.N7)-1))
+        res.loc[:,'Drx_n'] = (params.val.froot_tip)*res.A7*(res.kspn*res.fwat6*res.Zwn_6) #A7 is root/xylem interface
+        res.loc[:,'Drx_i'] = (params.val.froot_tip)*res.A7*(res.kspi*res.fwat6*res.Zwi_6*res.N2/(np.exp(res.N6)-1))
+        res.loc[:,'Dxr_n'] = (params.val.froot_tip)*res.A7*(res.kspn*res.fwat7*res.Zwn_7)
+        res.loc[:,'Dxr_i'] = (params.val.froot_tip)*res.A7*(res.kspi*res.fwat7*res.Zwi_7*res.N7/(np.exp(res.N7)-1))
         res.loc[mask,'Drx_i'], res.loc[mask,'Dxr_i'] = 0,0 #Set neutral to zero
-        res.loc[:,'D_et6'] = res.Qet*res.Zw6
+        #res.loc[:,'D_et6'] = res.Qet*res.Zw6 #Removed because this should just be diffusion across membrane
         res.loc[:,'D_rg6'] = params.val.k_rg*res.V6*res.Z6 #root growth
-        res.loc[:,'D_67'] = res.Drx_n+res.Drx_i+res.D_et6
+        res.loc[:,'D_67'] = res.Drx_n+res.Drx_i#+res.D_et6
         res.loc[:,'D_76'] = res.Dxr_n+res.Dxr_i
         res.loc[:,'DT6'] = res.D_62+res.D_64+res.D_67+res.D_rg6+res.Dadv6+res.Dr6 #Total D val
         #Root body does not go to water (1), shoots(3), air (5), root (8). Explicit for error checking.
@@ -680,9 +679,9 @@ class BCBlues_1d(FugModel):
                 if Tj in timeseries.columns: #Only update if this is a time-varying parameter
                       locsumm.loc[comps[j],'Temp'] = timeseries.loc[t,Tj]
                 if pHj in timeseries.columns:
-                      locsumm.loc[comps[j],'Temp'] = timeseries.loc[t,pHj]
+                      locsumm.loc[comps[j],'pH'] = timeseries.loc[t,pHj]
                 if condj in timeseries.columns:
-                          locsumm.loc[comps[j],'Temp'] = timeseries.loc[t,pHj]
+                          locsumm.loc[comps[j],'cond'] = timeseries.loc[t,condj]
             #Need to update advective flow in air compartment, 
            # res = self.input_calc(locsumm,chemsumm,params,pp,numc)
             res = self.input_calc(locsumm,chemsumm,params,pp,8) #For running with fewer than 8 compartments
@@ -715,28 +714,10 @@ class BCBlues_1d(FugModel):
             params.loc['Time','val']=t
             res = self.ADRE_1DUSS(res,params,numc,dt)
             res_t[t] = res.copy(deep=True)
-            """
-            #Testing - just to have something here
-            for j in range(0,numc):
-                a_val = 'a'+str(j+1) + '_t1'
-                res.loc[:,a_val] = 0 
-
-            """
-            #Now comes the twicky part. Put together 
-            #for j in range(0,numc):
-            #    a_val = 'a'+str(j+1) + '_t'
-            #    res.loc[:,a_val] = 0
-        #Once we are out of the time loop, put the whole dataframe together
+        
+        #Outside of loop put it all together
         res_time = pd.concat(res_t)
-        """
-                chems = chemsumm.index
-        numchems = len(chems)
-        resi = dict.fromkeys(chems,[])
-        #Using the chems as the keys of the dict(resi) then concatenate
-        for i in range(numchems):
-            resi[chems[i]] = res.copy(deep=True)
-        res = pd.concat(resi)
-        """
+
         return res_t, res_time
     
     def mass_flux(self,res_time):
