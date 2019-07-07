@@ -18,46 +18,43 @@ import pdb
 import math
 
 params = pd.read_excel('params_hydro.xlsx',index_col = 0) 
-locsumm = pd.read_excel('Hydro_veg.xlsx',index_col = 0) 
+locsumm = pd.read_excel('Hydro_veg1.xlsx',index_col = 0) 
 chemsumm = pd.read_excel('OPE_only_CHEMSUM_hydro.xlsx',index_col = 0)
 #chemsumm = pd.read_excel('OPECHEMSUMM.xlsx',index_col = 0)
 #chemsumm = pd.read_excel('EHDPPCHEMSUMM.xlsx',index_col = 0)
-timeseries_orig = pd.read_excel('timeseries_wanhydro1.xlsx')
-timeseries = timeseries_orig.copy(deep=True)
-#pdb.set_trace()
-run_period = 25 #if run_period/dt not a whole number there will be a problem
-dt = timeseries.time[1] - timeseries.time[0]
-totalt = int(math.ceil(run_period/dt))
-if totalt <= len(timeseries):
-    timeseries = timeseries[0:totalt+1]
-else:
-    while math.ceil(totalt/len(timeseries)) > 2.0:
-        timeseries = timeseries.append(timeseries)
-    totalt = totalt - len(timeseries)
-    timeseries = timeseries.append(timeseries[0:totalt])
-    timeseries.loc[:,'time'] = np.arange(dt,run_period+dt,dt)
-    timeseries.index = range(len(timeseries))
+timeseries = pd.read_excel('timeseries_wanhydro2.xlsx') #for IVP solver
 
+tspan = np.arange(0,250,1)
 test = Hydro_veg(locsumm,chemsumm,params,6)
-#chemsumm, res = test.hydro_sys(locsumm,chemsumm,params,pp=None,numc=6)
-#res = test.input_calc(locsumm,chemsumm,params,pp=None,numc=6)
-res_t, res_time = test.run_hydro(locsumm,chemsumm,params,timeseries,numc=6,pp=None)
+#pdb.set_trace()
 
-#Seaborn
-#Set plotting parameters
-yvar = 'a2_t'
+res_time, sols = test.ivp_hydro(locsumm,chemsumm,params,timeseries,tspan,numc=6,pp=None,outtype = 'maxi')
+mass_t, mass_bal = test.mass_bal(res_time,6)
+res_time = test.mass_conc(res_time,6)
+#res_t,sols = test.ivp_hydro(locsumm,chemsumm,params,timeseries,tspan,numc=6,pp=None,outtype = 'mini')
+
+
+#Plot concentration in the roots and the shoots
+yvar1 = 'shoot_conc'
+yvar2 = 'root_conc'
+yvar3 = 'water_conc'
 pltdata = res_time.loc[(slice(None),slice(None),0),slice(None)]
 #res_time.loc[(plttime,slice(None),slice(None)),slice(None)] #Just at plttime
-ylim = [0, 0.3]
-ylabel = 'Activity'
+ylim = [-0.5e-15, 7e-3]
+xlim = [0, 1000]
+ylabel = 'Concentration (μg/g dw)'
 xlabel = 'Time'
 #pltdata = res_time #All times at once
-fig = plt.figure(figsize=(14,8))
-ax = sns.lineplot(x = pltdata.index.get_level_values(0), y = yvar, hue = pltdata.index.get_level_values(1),data = pltdata)
-#ax.set_ylim(ylim)
-ax.set_ylabel(ylabel, fontsize=20)
-ax.set_xlabel(xlabel, fontsize=20)
-ax.tick_params(axis='both', which='major', labelsize=15)
+f, axes = plt.subplots(3, 1, figsize=(14, 8), sharex=True)
+#fig = plt.figure(figsize=(14,8))
+sns.lineplot(x = pltdata.index.get_level_values(0), y = yvar1, hue = pltdata.index.get_level_values(1),data = pltdata, ax = axes[0])
+sns.lineplot(x = pltdata.index.get_level_values(0), y = yvar2, hue = pltdata.index.get_level_values(1),data = pltdata, ax = axes[1])
+sns.lineplot(x = pltdata.index.get_level_values(0), y = yvar3, hue = pltdata.index.get_level_values(1),data = pltdata, ax = axes[2])
+#ax[1].set_ylim(ylim)#
+#axes[1].set_xlim(xlim)
+axes[0].tick_params(axis='both', which='major', labelsize=15)
+axes[1].tick_params(axis='both', which='major', labelsize=15)
+axes[2].tick_params(axis='both', which='major', labelsize=15)
 
 outpath ='D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/hydro_output.pkl'
 res_time.to_pickle(outpath)
