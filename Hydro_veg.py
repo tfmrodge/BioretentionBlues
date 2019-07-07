@@ -143,7 +143,7 @@ class Hydro_veg(BCBlues_1d):
             res.loc[:,'rrxn2'] = res['dummy'].mul(np.log(2)/chemsumm.VegHL,level = 0)
         else:#If no HL for vegetation specified, assume 0.1 * wat HL - based on Wan (2017) wheat plants?
             #res.loc[:,'rrxn2'] = res['dummy'].mul(np.log(2)/chemsumm.WatHL*0.1,level = 0) #0.1 * watHL
-            res.loc[:,'rrxn2'] = res['dummy'].mul(np.log(2)/(chemsumm.WatHL*0.1),level = 0) #Testing shorter HL
+            res.loc[:,'rrxn2'] = res['dummy'].mul(np.log(2)/(chemsumm.WatHL*params.val.HLPlant),level = 0) #Testing shorter HL
         res.loc[:,'rrxn3'] = arr_conv(params.val.Ea,res.temp3,res.rrxn2) #RootXylem
         res.loc[:,'rrxn4'] = arr_conv(params.val.Ea,res.temp4,res.rrxn2) #Root Cylinder
         res.loc[:,'rrxn5'] = arr_conv(params.val.Ea,res.temp5,res.rrxn2) #Shoots
@@ -252,7 +252,7 @@ class Hydro_veg(BCBlues_1d):
         res.loc[:,'Zi1'] = (1-res.fpart1) * (res.Zwi_1) + res.fpart1 * (res.Zqi_1)
         res.loc[:,'Zn1'] = (1-res.fpart1) * (res.Zwn_1) + res.fpart1 * (res.Zqn_1)
         res.loc[:,'Zw1'] = (1-res.fpart1)*(res.Zwi_1) + (1-res.fpart1)*(res.Zwn_1)
-        res.loc[:,'Z1'] = res.Zi1+res.Zn1
+        res.loc[:,'Z1'] = (res.Zi1+res.Zn1)/1e5
         
         #2 Root Body - main portion of the root. Consists of "free space" 
         #(soil pore water), and cytoplasm - could add vaccuol
@@ -306,11 +306,11 @@ class Hydro_veg(BCBlues_1d):
             advj = 'adv' + str(j+1)
             #Assuming that degradation is not species specific and happends on 
             #the bulk medium (unless over-written)
-            res.loc[:,Drj] = 0#res.loc[:,Zj] * res.loc[:,Vj] * res.loc[:,rrxnj] 
+            res.loc[:,Drj] = res.loc[:,Zj] * res.loc[:,Vj] * res.loc[:,rrxnj] 
             res.loc[:,Dadvj] = res.loc[:,Zj] * res.loc[:,Vj] * res.loc[:,advj]
         #For air, different reactive rate for the particle and bulk
-        res.loc[:,'Dr6'] = 0#(1-res.phi6) * res.loc[:,'V6'] * res.loc[:,'rrxn6']\
-        #+ res.phi6 * res.airq_rrxn
+        res.loc[:,'Dr6'] = (1-res.phi6) * res.loc[:,'V6'] * res.loc[:,'rrxn6']\
+        + res.phi6 * res.airq_rrxn
         
         #1 Water - roots and air
         #pdb.set_trace()
@@ -336,7 +336,7 @@ class Hydro_veg(BCBlues_1d):
                   * res.Z6) + 1 / (params.val.kmw * res.A16 * res.Zn1)) #Air/water gaseous diffusion
         res.loc[:,'D_dw'] = res.A16 * params.val.Up * res.Zq6 #dry dep of aerosol
         #Inter-Compartmental D Values
-        res.loc[:,'D_12'] = (res.Dwr_n1 + res.Dwr_i1) /10
+        res.loc[:,'D_12'] = (res.Dwr_n1 + res.Dwr_i1)
         res.loc[:,'D_21'] = res.Drw_n1 + res.Drw_i1 + res.D_rd21
         res.loc[:,'D_13'] = res.D_apo1 #Apoplast bypass straight to xylem
         res.loc[:,'D_31'] = res.D_rd31
@@ -526,7 +526,14 @@ class Hydro_veg(BCBlues_1d):
                             c1[i,4,0]*y[0]+c1[i,4,1]*y[1]+c1[i,4,2]*y[2]+c1[i,4,3]*y[3]+c1[i,4,4]*y[4]+c1[i,4,5]*y[5],
                             c1[i,5,0]*y[0]+c1[i,5,1]*y[1]+c1[i,5,2]*y[2]+c1[i,5,3]*y[3]+c1[i,5,4]*y[4]+c1[i,5,5]*y[5]]
                 return dydt
-            yinit = [res_t[0].loc[(compound,0),'a1_t'],0.,0.,0.,0.,0.]
+            #Now we set up and solve the equation dM/dt = -DTj*ak + Djk*ak for every compartment. Note that we are
+            #directly solving for mass (as dependent variable) rather than activity, so we need to divide by VZ to get
+            #activity when we put this in the final form
+            #pdb.set_trace()
+            Mo = chemsumm.InitialWaterConc[compound]*res_t[0].loc[(compound,0),'V1']*1e-3 #ug to g conversion
+            #res_t[0].loc[(compound,0),'a1_t']*res_t[0].loc[(compound,0),'V1']*res_t[0].loc[(compound,0),'Z1']
+            #Mo = res_t[0].loc[(compound,0),'a1_t']
+            yinit = [Mo,0.,0.,0.,0.,0.]
             sol = solve_ivp(lambda t, y: f(t, y, c), 
                 [tspan[0], tspan[-1]], yinit,method = 'Radau', t_eval=tspan)
             sols[compound] = sol
@@ -542,38 +549,88 @@ class Hydro_veg(BCBlues_1d):
                 else: 
                     res = res_t[1]
                 for j in range(0,numc): 
-                    a_val = 'a'+str(j+1) + '_t'
-                    res.loc[:,a_val] = np.array(sol_y.loc[(slice(None),j),t]) #Skip water compartment
-                    resi[t] = res
+                    a_val, V_val, Z_val= 'a'+str(j+1) + '_t', 'V' + str(j+1), 'Z' + str(j+1)
+                    res.loc[:,a_val] = np.array(sol_y.loc[(slice(None),j),t])\
+                    /(res.loc[:,V_val]*res.loc[:,Z_val])
+                resi[t] = res.copy(deep=True)
             res_time = pd.concat(resi)
         else: res_time = res_t
         
         return res_time, sols
     
-    def mass_bal(self,res_t,sols,locsumm,chemsumm,numc):
-        """Calculate the mass in each of the compartments using the IVP_Hydro
-        solution. 
+    def mass_bal(self,res_time,numc):
+        """Calculate the mass in each of the compartments in a seperate array
         
-        res_t(dict):Contains the initial calculations at 
-        
-        sols(dict): Contains the solutions (sol) from the IVP ODE solver for each
-        compound. sol.y is the activity in each compartment, sol.t is the time
+        res_time(df): Contains all the information for all the compartments at all times.
         """
-        pdb.set_trace()
-        chems = res_t[0].index.get_level_values(0)
+        #pdb.set_trace()
+        chems = res_time.index.levels[1]
         numchems = len(chems)
-        mass_bal = np.zeros([len(chems),sols[chems[0]].y.shape[1]]) #mass balance for each compound at each time step
+        numts = len(res_time.index.levels[0])
+        mass_bal = np.zeros([numchems,numts]) #mass balance for each compound at each time step
         #comps = locsumm.index.get_level_values(0)
-        mass_t = np.zeros([len(chems),sols[chems[0]].y.shape[0]+1,sols[chems[0]].y.shape[1]]) #Mass in each compartment & overall mass at each timestep     
+        mass_t = np.zeros([len(chems),numc+1,numts]) #Mass in each compartment & overall mass at each timestep     
         for i in range(numchems): #loop through chemicals
             chem = chems[i]
             for j in range(numc):
-                Vj,Zj = 'V'+str(j+1),'Z'+str(j+1)
-                mass_t[j,:] = sols[chem].y[j,:]*np.array(res_t[0].loc[chem,Vj]*res_t[0].loc[chem,Zj])
-        mass_t[numc,:]= mass_t.sum(axis = 0)
-        mass_bal = np.diff(mass_t[numc,:])
+                Vj,Zj,a_val = 'V'+str(j+1),'Z'+str(j+1),'a'+str(j+1) + '_t'#Mass = aVZ
+                mass_t[i,j,:] = np.array(res_time.loc[(slice(None),chem,0),a_val]\
+                      * res_time.loc[(slice(None),chem,0),Vj]*res_time.loc[(slice(None),chem,0),Zj])
+        mass_t[:,numc,:]= mass_t.sum(axis = 1)
+        mass_bal = np.diff(mass_t[:,numc,:])
+        #Also put it in the res_time dataframe
         
         return mass_t, mass_bal
+    
+    def mass_conc(self,res_time,numc):
+        """Calculate the masses in the compartments and the concentrations in the roots and shoots
+        in the res_time dataframe. Repetive but sometimes having the seperate dataframe is nice so w/e
+        Since the solution is implicit, the value in a1_t is actually representing a1_t1
+       
+        res_time(df): Contains all the information for all the compartments at all times.
+        """
+        #pdb.set_trace()
+        dt = res_time.index.levels[0][1] - res_time.index.levels[0][0] #assume constant dt
+        res_time.loc[:,'Msys_t'] = 0
+        #Calculate the masses & fluxes in the compartments
+        for j in range(numc):
+            Vj,Zj,a_val = 'V'+str(j+1),'Z'+str(j+1),'a'+str(j+1) + '_t'#Mass = aVZ
+            Mtj = 'Mt'+str(j+1)
+            Drj,Nrj,NTj, DTj= 'Dr' + str(j+1),'Nr' + str(j+1),'NT' + str(j+1),'DT' + str(j+1)
+            res_time.loc[:,Mtj] =(res_time.loc[:,a_val]*res_time.loc[:,Vj]*res_time.loc[:,Zj])
+            res_time.loc[:,'Msys_t'] += res_time.loc[:,Mtj] #Total mass in all compartments
+            res_time.loc[:,Nrj] = dt*(res_time.loc[:,Drj] * res_time.loc[:,a_val]) 
+            res_time.loc[:,NTj] = dt*(res_time.loc[:,DTj] * res_time.loc[:,a_val])#Total mass out
+            #Next,calculate transfer between compartments
+            for k in range(numc):#From compartment j to compartment k
+                if j != k:
+                    Djk,Njk = 'D_'+str(j+1)+str(k+1),'N' +str(j+1)+str(k+1)
+                    res_time.loc[:,Njk] = dt*(res_time.loc[:,Djk] * res_time.loc[:,a_val])
+        
+        #Roots are three compartments, add them up here
+        res_time.loc[:,'Mt_root'] = res_time.Mt2+res_time.Mt3+res_time.Mt4
+        #Growth dilution processes are modelled as first-order decay. For now, add to the reactive N value for that compartment
+        res_time.loc[:,'Nr2'] += dt*(res_time.loc[:,'D_rg2'] * res_time.loc[:,'a2_t'])
+        res_time.loc[:,'Nr3'] += dt*(res_time.loc[:,'D_rg3'] * res_time.loc[:,'a3_t'])
+        res_time.loc[:,'Nr4'] += dt*(res_time.loc[:,'D_rg4'] * res_time.loc[:,'a4_t'])
+        res_time.loc[:,'Nr5'] += dt*(res_time.loc[:,'D_sg'] * res_time.loc[:,'a5_t'])
+        #Only removal processes from this system are growth dilution and transformation. Sum here as NrT
+        res_time.loc[:,'NrT'] = res_time.Nr1+res_time.Nr2+res_time.Nr3+res_time.Nr4+res_time.Nr5+res_time.Nr6
+        #Distribution of mass between compartments
+        for j in range(numc): 
+            Mtj,Mdistj = 'Mt' + str(j+1),'Mdist' + str(j+1)
+            res_time.loc[:,Mdistj] = res_time.loc[:,Mtj]/res_time.loc[:,'Msys_t']
+        #Next, calculate the dry weights of the roots and the shoots
+        res_time.loc[:,'dw_root'] = (res_time.V2*res_time.fwat2)*res_time.rho2+(res_time.V3*res_time.fwat3)*res_time.rho3 \
+        +(res_time.V4*res_time.fwat4)*res_time.rho4
+        res_time.loc[:,'dw_shoot'] = (res_time.V5*res_time.fwat5)*res_time.rho5
+        #ThDetermine concentration (ug/g dry weight) in the roots and the shoots
+        res_time.loc[:,'shoot_conc'] = res_time.Mt5/res_time.dw_shoot*1000 #g/kg to ug/g conversion
+        res_time.loc[:,'root_conc'] = res_time.Mt_root/res_time.dw_root*1000 #g/kg to ug/g conversion
+        #Calculate water concentration (ug/L)
+        res_time.loc[:,'water_conc'] = res_time.Mt1/res_time.V1*1000
+        
+        return res_time
         
         
         

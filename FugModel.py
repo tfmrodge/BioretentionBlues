@@ -542,8 +542,6 @@ class FugModel(metaclass=ABCMeta):
         and D_ij(t+1) for each compartment, mass M(n), as well as a column named
         compound. num_compartments (numc) defines the size of the matrix. 
         From Csizar, Diamond and Thibodeaux (2012) DOI 10.1016/j.chemosphere.2011.12.044
-        Possibly this doesn't belong in the parent class, to use it needs to be called
-        in a loop which would be in a child classes method.
         """
         #pdb.set_trace()
         #Set up and solve a single box-model Level IV multimedia model
@@ -596,9 +594,11 @@ class FugModel(metaclass=ABCMeta):
         return res
     
     def IVP_matrix(self,ic,num_compartments):
-        """ Set up an initial value problem for da/dt - need to divide through by
-        the volume and the Z value. This is for use with the scipy solve_ivp function
+        """ Set up an initial value problem for dM/dt - need to divide through by
+        the volume and the Z value to convert to activity on the RHS
+        This is for use with the scipy solve_ivp function
         https://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.solve_ivp.html
+        Not sure what the best thing for varying parameters would be 
         
         Input calcs (ic) need to include , DTi(t+1), D_ij(t+1), volumes and Z v
         values for each compartment
@@ -621,10 +621,12 @@ class FugModel(metaclass=ABCMeta):
             for k in range(0,numc): #k is the column index
                 if (j == k): #DT values 
                     D_val, V_val, Z_val = 'DT' + str(k+1), 'V' + str(k+1), 'Z' + str(k+1)
+                    #mat[:,DT_vals+j,DT_vals+k] = -np.array(res.loc[:,D_val]).reshape(numchems,1) #Testing for mass balance
                     mat[:,DT_vals+j,DT_vals+k] = -np.array(res.loc[:,D_val]/\
-                   (res.loc[:,V_val]*res.loc[:,Z_val])).reshape(numchems,1) #Divide by VZ to get the activity
+                    (res.loc[:,V_val]*res.loc[:,Z_val])).reshape(numchems,1) #Divide by VZ to get the activity
                 else: #Place the intercompartmental D values
                     D_val, V_val, Z_val = 'D_' +str(k+1)+str(j+1), 'V' + str(k+1), 'Z' + str(k+1)
+                    #mat[:,DT_vals+j,DT_vals+k] = np.array(res.loc[:,D_val]).reshape(numchems,1) #Testing for mass balance
                     mat[:,DT_vals+j,DT_vals+k] = np.array(res.loc[:,D_val]/\
                        (res.loc[:,V_val]*res.loc[:,Z_val])).reshape(numchems,1) #Divide by VZ to get the activity
         return mat
