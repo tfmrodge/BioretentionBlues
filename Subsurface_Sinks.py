@@ -34,124 +34,6 @@ class Subsurface_Sinks(FugModel):
         FugModel. __init__(self,locsumm,chemsumm,params,num_compartments,name)
         self.pp = pplfer_system
         #self.ic = self.input_calc(self.locsumm,self.chemsumm,self.params,self.pp,self.numc)
-        
-    def make_system(self,locsumm,params,numc,dx = None):
-        #This function will build the dimensions of the 1D system based on the "locsumm" input file.
-        #If you want to specify more things you can can just skip this and input a dataframe directly
-        L = locsumm.Length.Water
-        params.loc['L','val'] = L
-        #dx = 0.1
-        if dx == None:
-            dx = params.val.dx
-        #Smaller cells at influent - testing turn on/off
-        #pdb.set_trace()
-        samegrid = True
-        if samegrid == True:
-            res = pd.DataFrame(np.arange(0.0+dx/2.0,L,dx),columns = ['x'])
-            res.loc[:,'dx'] = dx
-        else:
-            dx_alpha = 0.5
-            dx_in = params.val.dx/10
-            res = pd.DataFrame(np.arange(0.0+dx_in/2.0,L/10.0,dx_in),columns = ['dx'])
-            res = pd.DataFrame(np.arange(0.0+dx_in/2.0,L/10.0,dx_in),columns = ['x'])
-            lenin = len(res) #Length of the dataframe at the inlet resolution
-            res = res.append(pd.DataFrame(np.arange(res.iloc[-1,0]+dx_in/2+dx/2,L,dx),columns = ['x']))
-            res = pd.DataFrame(np.array(res),columns = ['x'])
-            res.loc[0:lenin-1,'dx'] = dx_in
-            res.loc[lenin:,'dx'] = dx
-        #pdb.set_trace()
-        #Control volume length dx - x is in centre of each cell.
-        res.iloc[-1,1] = res.iloc[-2,1]/2+L-res.iloc[-1,0]
-        #Integer cell number is the index, columns are values, 'x' is the centre of each cell
-        #res = pd.DataFrame(np.arange(0+dx/2,L,dx),columns = ['x'])
-        #Set up the water compartment
-        res.loc[:,'Q1'] = params.val.Qin - (params.val.Qin-params.val.Qout)/L*res.x 
-        res.loc[:,'Qet'] = -1*res.Q1.diff() #ET flow 
-        res.loc[0,'Qet'] = params.val.Qin - res.Q1[0] #Upstream boundary
-        res.loc[:,'Qet2'] = res.Qet*params.val.fet2
-        res.loc[:,'Qet4'] = res.Qet*params.val.fet4
-        res.loc[:,'q1'] = res.Q1/(locsumm.Depth[0] * locsumm.Width[0])  #darcy flux [L/T] at every x
-        res.loc[:,'porosity1'] = locsumm.Porosity[0] #added so that porosity can vary with x
-        res.loc[:,'porosity2'] = locsumm.Porosity[1] #added so that porosity can vary with x
-        res.loc[:,'porosity4'] = locsumm.Porosity[3]
-        #Define the geometry of the Oro Loma system
-        oro_x = [0,1.5239,1.524,15.4305,15.4306,16.1163,16.1164,30.0228,30.0229,30.7086,30.7087,45.0342,45.0343,45.72] #x-coordinates of the Oro Loma design drawing taper and mixing wells
-        #With Mixing Wells
-        #oro_dss = [0.3048,0.3048,0.3048,0.3048,0.6096,0.9144,0.3048,0.3048,0.9144,0.9144,0.3048,0.3048,0.762,0.762] #Subsoil depths from the Oro Loma design drawing. Mixing wells are represented by 3' topsoil depths
-        #oro_dts = [0.,0.,0.6096,0.6096,0.,0.,0.6096,0.6096,0.,0.,0.6096,0.4572,0.,0.] #Topsoil depths. Mixing wells do not have a topsoil layer
-        #Without Mixing Wells
-        #For topsoil as just surface layer
-        oro_dss = [0.2548, 0.2548, 0.8644, 0.8644, 0.8644, 0.8644, 0.8644, 0.8644,0.8644, 0.8644, 0.8644, 0.712 , 0.712 , 0.712 ]
-        oro_dts = [0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05,0.05]
-        #oro_dss = [0.3048,0.3048,0.3048,0.3048,0.3048,0.3048,0.3048,0.3048,0.3048,0.3048,0.3048,0.3048,0.3048,0.3048] #Subsoil depths from the Oro Loma design drawing. Mixing wells are represented by 3' topsoil depths
-        #oro_dts = [0.,0.,0.6096,0.6096,0.6096,0.6096,0.6096,0.6096,0.6096,0.6096,0.6096,0.4572,0.4572,0.4572]
-        f_dss = interp1d(oro_x,oro_dss,'linear') #Function to define subsoil depth
-        f_dts = interp1d(oro_x,oro_dts,'linear') #Function to define topsoil depth 
-        res.loc[:,'depth_ss'] = f_dss(res.x)#Depth of the subsoil
-        res.loc[:,'depth_ts'] = f_dts(res.x)#Depth of the topsoil
-        #Include immobile phase water content, so that Vw is only mobile phase & V2 includes immobile phase
-        #Areas for each compartment are defined as the cross sectional "flow area"
-        res.loc[:,'A1'] = locsumm.Width[0] * res.depth_ss * res.porosity1 * params.val.thetam
-        res.loc[:,'A2'] =  locsumm.Width[0] * res.depth_ss * (res.porosity2 + res.porosity1*(1-params.val.thetam))
-        res.loc[:,'v1'] = res.Q1/res.A1 #velocity [L/T] at every x - velocity is eq
-        params.loc['vin','val'] = params.val.Qin/(res.A1[0])
-        params.loc['vout','val'] = params.val.Qout/(res.A1[0])
-        #For the topsoil compartment there is a taper in the bottom 2/3 of the cell
-        #res.loc[:,'depth_ts'] = 0.6096
-        #res.loc[res.x<2.1336,'depth_ts'] = 0 #No topsoil compartment in the first 7 feet
-        #res.loc[res.x>30.7848,'depth_ts'] = 0.6096-(res.x-30.7848)*(0.5/47) #Topsoil tapers in bottom third from 2' to 1.5'
-        #res.loc[res.x>45.1104,'depth_ts'] = 0 #Bottom 2' is just gravel drain
-        res.loc[:,'A4'] = locsumm.Width[0] * res.depth_ts
-        #Now loop through the columns and set the values
-        #pdb.set_trace()
-        for j in range(numc):
-            #Area (A), Volume (V), Density (rho), organic fraction (foc), ionic strength (Ij)
-            #water fraction (fwat), air fraction (fair), temperature (tempj), pH (phj)
-            Aj, Vj, rhoj, focj, Ij = 'A' + str(j+1), 'V' + str(j+1),'rho' + str(j+1),'foc' + str(j+1),'I' + str(j+1)
-            fwatj, fairj, tempj, pHj = 'fwat' + str(j+1), 'fair' + str(j+1),'temp' + str(j+1), 'pH' + str(j+1)
-            rhopartj, fpartj, advj = 'rhopart' + str(j+1),'fpart' + str(j+1),'adv' + str(j+1)
-            if j <= 1 or j == 3: #done above, water and subsoil as 0 and 1, topsoil as 3
-                pass
-            else: #Other compartments don't share the same CV
-                res.loc[:,Aj] = locsumm.Width[j] * locsumm.Depth[j]
-            res.loc[:,Vj] = res.loc[:,Aj] * res.dx #volume at each x [L³]
-            res.loc[:,focj] = locsumm.FrnOC[j] #Fraction organic matter
-            res.loc[:,Ij] = locsumm.cond[j]*1.6E-5 #Ionic strength from conductivity #Plants from Trapp (2000) = 0.5
-            res.loc[:,fwatj] = locsumm.FrnWat[j] #Fraction water
-            res.loc[:,fairj] = locsumm.FrnAir[j] #Fraction air
-            res.loc[:,fpartj] = locsumm.FrnPart[j] #Fraction particles
-            res.loc[:,tempj] = locsumm.Temp[j] + 273.15 #Temperature [K]
-            res.loc[:,pHj] = locsumm.pH[j] #pH
-            res.loc[:,rhopartj] = locsumm.PartDensity[j] #Particle density
-            res.loc[:,rhoj] = locsumm.Density[j] #density for every x [M/L³]
-            res.loc[:,advj] = locsumm.Advection[j]
-            if locsumm.index[j] == 'Air': #Set air density based on temperature
-                res.loc[:,rhoj] = 0.029 * 101325 / (params.val.R * res.loc[:,tempj])
-                
-        #Root volumes & area based off of soil volume fraction
-        res.loc[:,'Vroot'] = params.val.VFroot*locsumm.Width[0]*res.dx #Total root volume per m² ground area
-        res.loc[:,'Aroot'] = params.val.Aroot*locsumm.Width[0]*res.dx #Need to define how much is in each section top and sub soil
-        #For area of roots in contact with sub and topsoil assume that roots in both zones are roughly cylindrical
-        #with the same radius. SA = pi r² 
-        res.loc[:,'A62'] = (1-params.val.froot_top) * params.val.Aroot*locsumm.Width[0]*res.dx #Area of roots in direct contact with subsoil
-        res.loc[:,'A64'] = params.val.froot_top * params.val.Aroot*locsumm.Width[0]*res.dx #Area of roots in contact with topsoil
-        res.loc[:,'A4V'] = locsumm.Width[0]*res.dx #Vertical direction area of the topsoil compartment
-        #Shoot area based off of leaf area index (LAI) 
-        res.loc[:,'A35'] = params.val.LAI*res.dx*locsumm.Width[0]
-        res.loc[res.depth_ts==0,'A4V'] = 0
-        res.loc[res.depth_ts==0,'A64'] = 0
-        #Roots are broken into the body, the xylem and the central cylinder.
-        res.loc[:,'V6'] = (params.val.VFrootbody+params.val.VFapoplast)*res.Vroot #Main body consists of apoplast and cytoplasm
-        res.loc[:,'V7'] = params.val.VFrootxylem*res.Vroot #Xylem
-        res.loc[:,'V8'] = params.val.VFrootcylinder*res.Vroot #Central cylinder
-        
-
-        #Longitudinal Dispersivity. Calculate using relationship from Schulze-Makuch (2005) 
-        #for unconsolidated sediment unless a value of alpha [L] is given
-        if 'alpha' not in params.index:
-            params.loc['alpha','val'] = 0.2 * L**0.44 #alpha = c(L)^m, c = 0.2 m = 0.44
-        res.loc[:,'ldisp'] = params.val.alpha * res.v1 #Resulting Ldisp is in [L²/T]
-        return res
                     
     def make_chems(self,chemsumm,pp):
         """If chemsumm relies on ppLFERs, fill it in. All chemical specific
@@ -211,7 +93,6 @@ class Subsurface_Sinks(FugModel):
         that will be used to calculate Z and D values. Basically just tidies things
         up a bit, might not be good practice to make this a seperate function
         """
-
         #Set up the output dataframe, res, a multi indexed pandas dataframe with the 
         #index level 0 as the chemical names, 1 as the integer cell number along x
         #First, call make_system if a full system hasn't been given
@@ -233,6 +114,8 @@ class Subsurface_Sinks(FugModel):
         #Deff = 1/tortuosity^2, tortuosity(j)^2 = 1-2.02*ln(porosity) (Shen and Chen, 2007)
         res.loc[:,'tausq1'] = 1/(1-2.02*np.log(res.porosity1))
         res.loc[:,'Deff1'] = res['tausq1'].mul(chemsumm.WatDiffCoeff, level = 0) #Effective water diffusion coefficient 
+        #res.loc[:,'Deff2'] = res['dummy'].mul(chemsumm.WatDiffCoeff, level = 0)*\
+        #res.fwat2**(10/3)/(res.fair2 +res.fwat2)**2#Added in case we need it - might not as Deff1 may cover
         res.loc[:,'Deff4'] = res['dummy'].mul(chemsumm.WatDiffCoeff, level = 0)*\
         res.fwat4**(10/3)/(res.fair4 +res.fwat4)**2 #Effective water diffusion coefficient 
         res.loc[:,'Bea4'] = res['dummy'].mul(chemsumm.AirDiffCoeff, level = 0)*\
@@ -251,19 +134,19 @@ class Subsurface_Sinks(FugModel):
             #Kaw is only neutral
             res.loc[:,Kawj] = vant_conv(res.dUaw,res.loc[:,tempj],res['dummy'].mul(10**chemsumm.LogKaw,level = 0))
             #Kd neutral and ionic
-            if any( [j == 0, j == 1, j == 3]): #for water, subsoil and topsoil if not directly input
+            if j in [0,1,3,8]: #for water, subsoil and topsoil if not directly input
                 if 'Kd' in chemsumm.columns: #If none given leave blank, will estimate from Koc & foc
                     res.loc[:,Kdj] = res['dummy'].mul(chemsumm.Kd,level = 0)
-                    mask = np.isnan(res.loc[:,Kdj])
+                    maskn = np.isnan(res.loc[:,Kdj])
                 else:
-                    mask = res.dummy==1
+                    maskn = res.dummy==1
                 if 'Kdi' in chemsumm.columns:#If none given leave blank, will estimate from Koc & foc
                     res.loc[:,Kdij] = res['dummy'].mul(chemsumm.Kdi,level = 0)
-                    mask = np.isnan(res.loc[:,Kdij])
+                    maski = np.isnan(res.loc[:,Kdij])
                 else:
-                    mask = res.dummy==1
-                res.loc[mask,Kdj] = res.loc[:,focj].mul(10**chemsumm.LogKocW, level = 0)
-                res.loc[mask,Kdij] = res.loc[mask,Kdj] #Assume same sorption if not given
+                    maski = res.dummy==1
+                res.loc[maskn,Kdj] = res.loc[:,focj].mul(10**chemsumm.LogKocW, level = 0)
+                res.loc[maski,Kdij] = res.loc[maski,Kdj] #Assume same sorption if not given
                 res.loc[:,Kdj] = vant_conv(res.dUow,res.loc[:,tempj],res.loc[:,Kdj]) #Convert with dUow
                 #The ionic Kd value is based off of pKa and neutral Kow
                 res.loc[:,Kdij] = vant_conv(res.dUow,res.loc[:,tempj],res.loc[:,Kdij])
@@ -272,11 +155,11 @@ class Subsurface_Sinks(FugModel):
         res.loc[:,'Kdi3'] = res.loc[:,'Kd3'] #Fix later if it is different
         res.loc[:,'Kd5'] = vant_conv(res.dUoa,res.temp5,res.loc[:,'foc5'].mul(10**chemsumm.LogKqa, level = 0)) #Air
         res.loc[:,'Kdi5'] = res.loc[:,'Kd5'] #Fix later if it is different
-        res.loc[:,'Kd6'] = vant_conv(res.dUslw,res.temp3,res.loc[:,'foc6'].mul(10**chemsumm.LogKslW, level = 0))
+        res.loc[:,'Kd6'] = vant_conv(res.dUslw,res.temp6,res.loc[:,'foc6'].mul(10**chemsumm.LogKslW, level = 0))
         res.loc[:,'Kdi6'] = res.loc[:,'Kd6'] #Fix later if it is different
-        res.loc[:,'Kd7'] = vant_conv(res.dUslw,res.temp3,res.loc[:,'foc7'].mul(10**chemsumm.LogKslW, level = 0))
+        res.loc[:,'Kd7'] = vant_conv(res.dUslw,res.temp7,res.loc[:,'foc7'].mul(10**chemsumm.LogKslW, level = 0))
         res.loc[:,'Kdi7'] = res.loc[:,'Kd7'] #Fix later if it is different
-        res.loc[:,'Kd8'] = vant_conv(res.dUslw,res.temp3,res.loc[:,'foc7'].mul(10**chemsumm.LogKslW, level = 0))
+        res.loc[:,'Kd8'] = vant_conv(res.dUslw,res.temp8,res.loc[:,'foc8'].mul(10**chemsumm.LogKslW, level = 0))
         res.loc[:,'Kdi8'] = res.loc[:,'Kd8'] #Fix later if it is different
         #Calculate temperature-corrected media reaction rates (/h)
         #These are all set so that they can vary in x, even though for now they do not
@@ -308,6 +191,11 @@ class Subsurface_Sinks(FugModel):
         else:
             res.loc[:,'airq_rrxn'] = res['dummy'].mul(chemsumm.AirOHRateConst*0.1, level = 0)*params.val.OHConc    
             res.loc[:,'airq_rrxn'] = arr_conv(params.val.EaAir,res.temp5,res.airq_rrxn)
+            
+        if numc == 9:
+            res.loc[:,'rrxn9'] = res['dummy'].mul(np.log(2)/chemsumm.WatHL,level = 0)
+            res.loc[:,'rrxn9'] = arr_conv(params.val.Ea,res.temp9,res.rrxn9)
+            
         #pdb.set_trace()
         #Mass transfer coefficients (MTC) [l]/[T]
         #Chemical but not location specific mass transport values
@@ -330,9 +218,9 @@ class Subsurface_Sinks(FugModel):
         g_s = g_h2o*np.sqrt(18)/np.sqrt(res['dummy'].mul(chemsumm.MolMass, level = 0))
         res.loc[:,'kst'] = g_s * res['dummy'].mul((10**chemsumm.LogKaw), level = 0) #MTC of stomata [L/T] (defined by Qet so m/h)
         #Cuticle
-        Pcut = 10**(0.704*res['dummy'].mul((chemsumm.LogKow), level = 0)-11.2)*3600 #m/h
-        res.loc[:,'kcut'] = 1/(1/Pcut + 1*res['dummy'].mul((10**chemsumm.LogKaw), level = 0)/(res.kav)) #m/h
-        res.loc[:,'kvv'] = res.kcut+res.kst #m/h
+        res.loc[:,'kcut'] = 10**(0.704*res['dummy'].mul((chemsumm.LogKow), level = 0)-11.2)*3600 #m/h
+        res.loc[:,'kcuta'] = 1/(1/res.kcut + 1*res['dummy'].mul((10**chemsumm.LogKaw), level = 0)/(res.kav)) #m/h
+        res.loc[:,'kvv'] = res.kcuta+res.kst #m/h
     
         return chemsumm, res
 
@@ -423,9 +311,8 @@ class Subsurface_Sinks(FugModel):
         res.loc[:,'Z3'] = res.Zi3+res.Zn3
         
         #4 Top soil - Water, soil, air
-        res.loc[:,'Zi4'] = res.fwat4*(res.Zwi_4) + (1 - res.fwat4 - res.fair4) *\
-        res.Zqi_4 
-        res.loc[:,'Zn4'] = res.fwat4*(res.Zwn_4) + (1 - res.fwat4 - res.fair4) *\
+        res.loc[:,'Zi4'] = res.fwat4*(res.Zwi_4)+(1-res.fwat4-res.fair4)*res.Zqi_4
+        res.loc[:,'Zn4'] = res.fwat4*(res.Zwn_4) + (1 - res.fwat4 - res.fair4)*\
         res.Zqn_4 + res.fair4*res.Kaw4 
         res.loc[:,'Zw4'] = res.fwat4*(res.Zwi_4) + res.fwat4*(res.Zwn_4)
         res.loc[:,'Zq4'] = (1 - res.fwat4 - res.fair4) * res.Zqi_4  + \
@@ -470,7 +357,16 @@ class Subsurface_Sinks(FugModel):
         res.loc[:,'Zn8'] = res.fwat8*(res.Zwn_8) + res.Zqn_8 + res.fair8 * res.Kaw8
         res.loc[:,'Zw8'] = res.fwat8*(res.Zwi_8) + res.fwat8*(res.Zwn_8)
         res.loc[:,'Z8'] = res.Zi8+res.Zn8
-               
+        
+        #9 Ponding Zone - only for BCs, code was written first without hence why 
+        #we put the switch in!
+        #Consists of suspended solids & water
+        if numc == 9:
+            res.loc[:,'Zi9'] = (1-res.fpart9) * (res.Zwi_9) + res.fpart9 * (res.Zqi_9)
+            res.loc[:,'Zn9'] = (1-res.fpart9) * (res.Zwn_9) + res.fpart9 * (res.Zqn_9)
+            res.loc[:,'Z9'] = res.Zi9+res.Zn9  
+            res.loc[:,'Zw9'] = res.fwat9*(res.Zwi_9) + res.fwat9*(res.Zwn_9)
+            res.loc[:,'Zq9'] = res.fpart9*(res.Zqi_9)+res.fpart9*(res.Zqn_9)  
         #D values (m³/h), N (mol/h) = a*D (activity based)
         #Loop through compartments to set reactive and out of system advective D values
         for j in range(numc): #Loop through compartments
@@ -489,17 +385,20 @@ class Subsurface_Sinks(FugModel):
         #Water - subsoil - transfer to pore water through ET and diffusion. 
         #May need to replace with a calibrated constant
         #From Mackay for water/sediment diffusion. 
-        pdb.set_trace()
+        #pdb.set_trace()
         res.loc[:,'D_d12'] =  1/(1/(params.val.kxw*res.A2*res.Z1)+Y2/(res.A2*res.Deff1*res.Zw2)) 
         res.loc[:,'D_et12'] = res.Qet2*(res.Zwi_1+res.Zwn_1) #ET flow goes through subsoil first - may need to change
-        res.loc[:,'D_12'] = res.D_d12 + res.D_et12 #Mobile to immobile phase
-        res.loc[:,'D_21'] = res.D_d12 #Immobile to mobile phase
         #Water - topsoil - Diffusion and ET
         res.loc[:,'D_d14'] = 1/(1/(params.val.kxw*res.A4V*res.Z1)+Y4/(res.A4V*res.Deff4*res.Zw4))
         res.loc[:,'Det14'] = res.Qet4*(res.Zwi_1+res.Zwn_1)
+        #Exfiltration/infiltration for unlined systems
+        res.loc[:,'D_exf'] = res.Q_exf*(res.Zwi_1+res.Zwn_1)
+        #Inter-compartmental D values
+        res.loc[:,'D_12'] = res.D_d12 + res.D_et12 #Mobile to immobile phase
+        res.loc[:,'D_21'] = res.D_d12 #Immobile to mobile phase
         res.loc[:,'D_14'] = res.D_d12 + res.D_et12 #Transfer to topsoil
         res.loc[:,'D_41'] = res.D_d12 #Transfer from topsoil
-        res.loc[:,'DT1'] = res.D_12+res.D_14+res.Dadv1+res.Dr1 #Total D value
+        res.loc[:,'DT1'] = res.D_12+res.D_14++res.D_exf+res.Dadv1+res.Dr1 #Total D value
         #Water does not go to shoots (3), air (5), roots (6-8). Explicit for error checking.
         res.loc[:,'D_13'] = 0
         res.loc[:,'D_15'] = 0
@@ -572,9 +471,9 @@ class Subsurface_Sinks(FugModel):
         #Topsoil-Air, volatilization
         res.loc[:,'D_d45'] = 1/(1/(params.val.ksa*res.A4V*res.Z5)+Y4/\
                (res.A4V*res.Bea4*res.Z1+res.A4V*res.Deff4*res.Zw4)) #Dry diffusion
-        res.loc[:,'D_wd54'] = res.A4V*res.Zw4*params.val.RainRate* (1-params.val.Ifw)*(1-res.phi5) #Wet gas deposion
+        res.loc[:,'D_wd54'] = res.A4V*res.Zw5*params.val.RainRate* (1-params.val.Ifw) #Wet gas deposion
         res.loc[:,'D_qs'] = res.A4V * res.Zq5 * params.val.RainRate * res.fpart5 *\
-        params.val.Q * (1-params.val.Ifw)  * res.phi5 #Wet dep of aerosol
+        params.val.Q * (1-params.val.Ifw)  #Wet dep of aerosol
         res.loc[:,'D_ds'] = res.A4V * res.Zq5 *  params.val.Up * res.fpart5* (1-Ifd) #dry dep of aerosol
         #Topsoil-roots, same as for subsoil
         res.loc[:,'N4'] = res.chemcharge*params.val.E_plas*params.val.F/(params.val.R*res.temp4)
@@ -646,7 +545,60 @@ class Subsurface_Sinks(FugModel):
         res.loc[:,'D_81'] = 0
         res.loc[:,'D_85'] = 0
         res.loc[:,'D_86'] = 0
-        
+        #pdb.set_trace()
+        #Ponding Zone - mobile water, shoots, topsoil, air
+        if numc == 9: #Need params.val.Qinf_91 - update with timestep
+            #NEED res.depth_ts, res.depth_pond
+            #Top boundary condition of the ponding zone - Mass flux from ponding zone
+            res.loc[:,'D_inf'] = params.val.Qinf_91*res.Zw9 #Infiltration from the ponding zone to mobile water
+            res.loc[:,'D_d94'] = 1/(1/(params.val.kxw*res.A4V\
+                  *res.Zw9)+(res.depth_ts/2)/(res.A4V*res.Deff4*res.Zw4)) #Diffusion between topsoil/pond
+            #Particle settling to topsoil - set the value of U94 by mass balance based on flow velocity?
+            #If_sw represents interception fraction of stormwater by vegetation
+            res.loc[:,'D_s94'] = (1-params.val.If_sw)*params.val.Udx*res.A4V*res.Zq9 #Particle settling
+            res.loc[:,'D_r94'] = params.val.Urx*res.A4V*res.Zq4 #Sediment resuspension
+            res.loc[:,'D_s93'] = (params.val.If_sw)*params.val.Udx*res.A4V*res.Zq9 #Particle deposition on plants
+            res.loc[:,'D_r93'] = params.val.Urx*res.A4V*res.Zq9 #Sediment resuspension - assume for plants that only deposited sediment is re-suspended
+            #Need to figure out plant uptake from water - do plants still work? Maybe just sorption?
+            #Assume diffusion only through cuticle (MTC for cuticle permeability), water (MTC water)
+            ###
+            res.loc[:,'A93'] = params.val.LAI*res.A3 #TEMPORARY ONLY - set in BCBlues module
+            ###
+            res.loc[:,'D_d93'] = 1/(1/(res.kcut*res.A93*res.Z5)+\
+                   1/(params.val.kmw*res.A93*res.Zw9)) #Water-plant diffusion
+            #Water-Air
+            res.loc[:,'D_d95'] = 1/(1/(params.val.kma*res.A4V*res.Z5)+(locsumm.Depth.Pond/2)/\
+               (res.A4V*res.Bea4*res.Z1+res.A4V*res.Deff4*res.Zw4)) #Dry air/water diffusion
+            ###
+            res.loc[:,'A95'] = res.A9 #TEMPORARY ONLY - set in BCBlues module
+            ###
+            res.loc[:,'D_wd59'] = res.A95*res.Zw5*params.val.RainRate* (1-params.val.Ifw)#Wet gas deposion
+            res.loc[:,'D_qw'] = res.A95 * res.Zq5 * params.val.RainRate * res.fpart5 *\
+            params.val.Q * (1-params.val.Ifw) #Wet dep of aerosol
+            res.loc[:,'D_dw'] = res.A95 * res.Zq5 *  params.val.Up * res.fpart5* (1-Ifd) #dry dep of aerosol
+            #Inter-compartmental D values
+            res.loc[:,'D_91'] = res.D_inf
+            res.loc[:,'D_92'] = 0
+            res.loc[:,'D_93'] = res.D_s93+res.D_d93
+            res.loc[:,'D_94'] = res.D_d94+res.D_s94
+            res.loc[:,'D_95'] = res.D_d95
+            res.loc[:,'D_96'] = 0
+            res.loc[:,'D_97'] = 0
+            res.loc[:,'D_98'] = 0
+            res.loc[:,'D_19'] = 0 
+            res.loc[:,'D_29'] = 0
+            res.loc[:,'D_39'] = res.D_d93+res.D_r93
+            res.loc[:,'D_49'] = res.D_d94+res.D_r94
+            res.loc[:,'D_59'] = res.D_d95+res.D_wd59+res.D_qw+res.D_dw
+            res.loc[:,'D_69'] = 0
+            res.loc[:,'D_79'] = 0
+            res.loc[:,'D_89'] = 0
+            #Total D values - need to update all
+            res.loc[:,'DT9'] = res.D_91+res.D_92+res.D_93+res.D_94+res.D_95+res.D_96\
+            +res.D_97+res.D_98+res.Dadv9+res.Dr9 #Total D val D_adv9 is weir overflow
+            res.loc[:,'DT3'] += res.D_39
+            res.loc[:,'DT4'] += res.D_49
+            res.loc[:,'DT5'] += res.D_59
         return res
 
 
@@ -686,8 +638,12 @@ class Subsurface_Sinks(FugModel):
                 if condj in timeseries.columns:
                           locsumm.loc[comps[j],'cond'] = timeseries.loc[t,condj]
             #Need to update advective flow in air compartment, 
-           # res = self.input_calc(locsumm,chemsumm,params,pp,numc)
-            res = self.input_calc(locsumm,chemsumm,params,pp,8) #For running with fewer than 8 compartments
+            # res = self.input_calc(locsumm,chemsumm,params,pp,numc)
+            if numc == 9:
+                res_numc = 9
+            else:
+                res_numc = 8
+            res = self.input_calc(locsumm,chemsumm,params,pp,res_numc) #Currently need to have all the compartments
             #Then add the upstream boundary condition
             chems = chemsumm.index
             for i in range(np.size(chems)):
