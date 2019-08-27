@@ -5,7 +5,7 @@ Created on Sun Jul  7 13:38:57 2019
 @author: Tim Rodgers
 """
 from FugModel import FugModel #Import the parent FugModel class
-from Subsurface_Sinks import Subsurface_Sinks
+from Subsurface_Sinks import SubsurfaceSinks
 from HelperFuncs import vant_conv, arr_conv #Import helper functions
 from scipy.integrate import solve_ivp
 from ode_helpers import state_plotter
@@ -15,7 +15,7 @@ import pandas as pd
 #import time
 import pdb #Turn on for error checking
 
-class Loma_Loadings(Subsurface_Sinks):
+class LomaLoadings(SubsurfaceSinks):
     """Wastewater treatment wetland implementation of the Subsurface_Sinks model.
     Created for the Oro Loma Horizontal Levee, hence the name. This model represents
     a horizontally flowing, planted wetland. It is intended to be solved as a Level V 
@@ -25,7 +25,7 @@ class Loma_Loadings(Subsurface_Sinks):
     Attributes:
     ----------
             
-            locsumm (df): physical properties of the systmem
+            locsumm (df): physical properties of the system
             chemsumm (df): physical-chemical properties of modelled compounds
             params (df): Other parameters of the model
             timeseries (df): Timeseries values providing the time-dependent inputs

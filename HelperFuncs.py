@@ -5,6 +5,7 @@ Created on Thu Jul 26 11:36:27 2018
 @author: Tim Rodgers
 """
 import numpy as np
+import pandas as pd
 
 def ppLFER(L,S,A,B,V,l,s,a,b,v,c):
     """polyparameter linear free energy relationship (ppLFER) in the 1 equation form from Goss (2005)
@@ -66,3 +67,14 @@ def make_ppLFER(pp):
         pp['dUaw'] = [-8.26,0.73,-33.56,-43.46,-17.31,-8.41]
         
     return pp
+
+#When slicing, reduce an index to match the display rather than keeping the
+#entire index
+def df_sliced_index(df):
+    new_index = []
+    rows = []
+    for ind, row in df.iterrows():
+        new_index.append(ind)
+        rows.append(row)
+    return pd.DataFrame(data=rows, index=pd.MultiIndex.from_tuples(new_index))
+
