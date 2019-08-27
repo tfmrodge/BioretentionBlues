@@ -8,7 +8,7 @@ Created on Fri Oct 12 18:10:27 2018
 import time
 import pandas as pd
 import numpy as np
-from BCBlues_1d import BCBlues_1d
+from Loma_Loadings import LomaLoadings
 import seaborn as sns; sns.set()
 import matplotlib
 import matplotlib.pyplot as plt
@@ -28,7 +28,7 @@ chemsumm = pd.read_excel('OPE_only_CHEMSUMM.xlsx',index_col = 0)
 timeseries = pd.read_excel('timeseries_test2.xlsx')
 #Truncate timeseries if you want to run fewer
 pdb.set_trace()
-totalt = 700
+totalt = 100
 if totalt <= len(timeseries):
     timeseries = timeseries[0:totalt+1]
 else:
@@ -41,7 +41,7 @@ else:
     
 numc = 8 #Change to 1 for pure advection testing of water compartment
 pp = None
-test = BCBlues_1d(locsumm,chemsumm,params,8) #Leave this as 8 always
+test = LomaLoadings(locsumm,chemsumm,params,8) #Leave this as 8 always
 #res = test.make_system(locsumm,params,numc)
 #chemsumm = test.make_chems(chemsumm,pp=None)
 #res = test.input_calc(locsumm,chemsumm,params,pp,numc)
@@ -50,7 +50,7 @@ start = time.time()
 
 #res = test.ic
 res_t, res_time = test.run_it(locsumm,chemsumm,params,numc,pp,timeseries)
-mf = test.mass_flux(res_time)
+mf = test.mass_flux(res_time,numc)
 #res_t, res_time = test.run_it(locsumm,chemsumm,params,1,pp,timeseries)
 
 

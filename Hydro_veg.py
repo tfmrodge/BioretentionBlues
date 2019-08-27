@@ -6,7 +6,7 @@ Created on Tue Jun 18 17:04:52 2019
 """
 
 from FugModel import FugModel #Import the parent FugModel class
-from BCBlues_1d import BCBlues_1d
+from Subsurface_Sinks import Subsurface_Sinks
 from HelperFuncs import vant_conv, arr_conv #Import helper functions
 from scipy.integrate import solve_ivp
 from ode_helpers import state_plotter
@@ -15,7 +15,7 @@ import pandas as pd
 #import time
 import pdb #Turn on for error checking
 
-class Hydro_veg(BCBlues_1d):
+class Hydro_veg(Subsurface_Sinks):
     """USS  Model of CSTR contaminant transport in hydroponic system. Goal is 
     to compare with hydroponic plant data from: DOI's 10.1021/acs.est.8b07189 (liu 2019)
     10.1021/acs.est.7b01758 (Wan 2017)

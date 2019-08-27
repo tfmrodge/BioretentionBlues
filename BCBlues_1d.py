@@ -12,7 +12,7 @@ from scipy.interpolate import interp1d
 #import time
 import pdb #Turn on for error checking
 
-class BCBlues_1d(FugModel):
+class Subsurface_Sinks(FugModel):
     """ Model of 1D contaminant transport in a vegetated, flowing system.
     This is a modification of the original BCBlues model to work with a 1D ADRE
     BCBlues_1d objects have the following properties:
@@ -354,9 +354,12 @@ class BCBlues_1d(FugModel):
         #numchems = len(chems)
         #R = params.val.R #Ideal gas constant, J/mol/K
         #Ifd = 1 - np.exp(-2.8 * params.Value.Beta) #Vegetation dry deposition interception fraction
-        Y2 = 1e-3 #Diffusion path length from mobile to immobile flow Just guessing here
+        Y2 = params.val.Y2 #Diffusion path length from mobile to immobile flow Just guessing here
         Y24 = locsumm.Depth[1]/2 #Half the depth of the mobile phase
-        Y4 = locsumm.Depth[3]/2 #Diffusion path is half the depth. Probably should make vary in X
+        if params.val.index.contains('Y4'):
+            Y4 = params.val.Y4
+        else:
+            Y4 = locsumm.Depth[3]/2 #Diffusion path is half the depth. Probably should make vary in X
         Ifd = 1 - np.exp(-2.8 * params.val.Beta) #Vegetation dry deposition interception fraction
         
         #Calculate activity-based Z-values (m³/m³). This is where things start
@@ -376,7 +379,7 @@ class BCBlues_1d(FugModel):
             'I' + str(j+1),'Zwn_' + str(j+1)
             Zqi_j, Zqn_j, Kdj, Kdij,rhopartj = 'Zqi_' + str(j+1),'Zqn_' + str(j+1),\
             'Kd' +str(j+1),'Kdi' +str(j+1),'rhopart' +str(j+1)
-            #Dissociation of compounds in environmental media using Henerson-Hasselbalch equation
+            #Dissociation of compounds in environmental media using Henderson-Hasselbalch equation
             #dissi_j - fraction ionic, dissn_j - fraction neutral. A pka of 999 = neutral
             #Multiplying by chemcharge takes care of the cations and the anions
             res.loc[:,dissi_j] = 1/(1+10**(res.chemcharge*(res.pKa-res.loc[:,pHj])))
@@ -482,11 +485,11 @@ class BCBlues_1d(FugModel):
         res.loc[:,'Dr5'] = (1-res.phi5) * res.loc[:,'V5'] * res.loc[:,'rrxn5']\
         + res.phi5 * res.airq_rrxn
         
-        #1 Water - interacts with subsoil and topsoil. May want to put direct ET to plants too
+        #1 Water - interacts with subsoil and topsoil. 
         #Water - subsoil - transfer to pore water through ET and diffusion. 
         #May need to replace with a calibrated constant
-        #From Mackay for water/sediment diffusion. Will be dominated by the ET flow so probably OK
-        #pdb.set_trace()
+        #From Mackay for water/sediment diffusion. 
+        pdb.set_trace()
         res.loc[:,'D_d12'] =  1/(1/(params.val.kxw*res.A2*res.Z1)+Y2/(res.A2*res.Deff1*res.Zw2)) 
         res.loc[:,'D_et12'] = res.Qet2*(res.Zwi_1+res.Zwn_1) #ET flow goes through subsoil first - may need to change
         res.loc[:,'D_12'] = res.D_d12 + res.D_et12 #Mobile to immobile phase
