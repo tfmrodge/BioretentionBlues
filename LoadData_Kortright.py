@@ -22,11 +22,11 @@ import math
 params = pd.read_excel('params_BC.xlsx',index_col = 0) 
 locsumm = pd.read_excel('Kortright_BC.xlsx',index_col = 0) 
 #locsumm = pd.read_excel('Oro_Loma_1.xlsx',index_col = 0) 
-chemsumm = pd.read_excel('OPE_only_CHEMSUMM.xlsx',index_col = 0)
+chemsumm = pd.read_excel('Kortright_CHEMSUMM.xlsx',index_col = 0)
 #chemsumm = pd.read_excel('OPECHEMSUMM.xlsx',index_col = 0)
 #emsumm = pd.read_excel('PROBLEMCHEMSUMM.xlsx',index_col = 0)
 #chemsumm = pd.read_excel('EHDPPCHEMSUMM.xlsx',index_col = 0)
-timeseries = pd.read_excel('timeseries_test_bc.xlsx')
+timeseries = pd.read_excel('timeseries_tracertest_Kortright.xlsx')
 #Truncate timeseries if you want to run fewer
 
 run_period = 240 #if run_period/dt not a whole number there will be a problem
@@ -54,8 +54,8 @@ start = time.time()
 #res = test.ic
 #bc_dims = test.bc_dims(locsumm,inflow,rainrate,dt,params)
 #res_time = test.flow_time(locsumm,timeseries,params)
-res_time =pd.read_pickle('D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/Flow_time.pkl')
-res_time = df_sliced_index(res_time.loc[(slice(0,5),slice(None)),:])
+res_time =pd.read_pickle('D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/Flow_time_tracertest.pkl')
+#res_time = df_sliced_index(res_time.loc[(slice(0,5),slice(None)),:])
 #res = test.make_system(res_time,params,numc)
 res_t = test.input_calc(locsumm,chemsumm,params,pp,numc,res_time) #Give entire time series - will not run flow module
 #res_t = test.input_calc(locsumm,chemsumm,params,pp,numc,timeseries) #Give timeseries values - will run the flows again

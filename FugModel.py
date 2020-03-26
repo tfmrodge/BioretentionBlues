@@ -222,7 +222,7 @@ class FugModel(metaclass=ABCMeta):
         return bw_out
     
 
-    def ADRE_1DUSS(self,ic,params,num_compartments,dt):
+    def ADRE_1DUSS(self,ic,params,numc,dt):
         
         """ Perform a single time step in a 1D ADRE multimedia model.
         This solution to the 1D ADRE requires flow modelling to be done seperately, 
@@ -258,57 +258,61 @@ class FugModel(metaclass=ABCMeta):
         dt (float): time step. Don't know if a float will work actually
         """
         #pdb.set_trace()
-        #Initialize outputs 
-        res = ic
-        numc = num_compartments
+        #Initialize outputs  #res.loc[(slice(None),slice(None),res.dm),:][1:numx]
+        res = ic.copy(deep=True)
         chems = res.index.levels[0]
         numchems = len(chems)
-        numx = int(len(res.x)/numchems)
-        reslen = int(len(res.x))
+        numx = len(res[res.dm].index.levels[2]) #Number of discretized xs
+        #Set up masks for the discretized 0th and last cells
+        res.loc[:,'dm0'] = False
+        res.loc[:,'dmn'] = False
+        res.loc[(slice(None),slice(None),0),'dm0'] = True #0th discretized cell
+        res.loc[(slice(None),slice(None),slice(numx-1,numx)),'dmn'] = True #Last discretized cell
         if 'dx' not in res.columns: #
             res.loc[:,'dx'] = res.groupby(level = 0)['x'].diff()
             res.loc[(slice(None),0),'dx'] = res.x[0]
-        #Calculate forward and backward facial values
+        #Calculate forward and backward facial values for the discretized cells
         #Back and forward facial Volumes (L³)
-        res.loc[1:reslen,'V1_b'] = (res.V1.shift(1) + res.V1)/2
-        res.loc[(slice(None), 0),'V1_b'] = res.loc[(slice(None),0),'V1']
-        res.loc[0:reslen-1,'V1_f'] = (res.V1.shift(-1) + res.V1)/2
-        res.loc[(slice(None), numx-1),'V1_f'] = res.loc[(slice(None),numx-1),'V1']
+        res.loc[:,'V1_b'] = (res.V1.shift(1) + res.V1)/2
+        res.loc[(slice(None),slice(None),res.dm0),'V1_b'] = res.loc[(slice(None),slice(None),res.dm0),'V1'] 
+        res.loc[:,'V1_f'] = (res.V1.shift(-1) + res.V1)/2
+        res.loc[(slice(None),slice(None),res.dmn),'V1_f'] = res.loc[(slice(None),slice(None),res.dmn),'V1'] 
         #Fluid velocity, v, (L/T). How far the fluid moves through the media in each time step
-        res.loc[1:reslen,'v_b'] = (res.v1.shift(1) + res.v1)/2
-        res.loc[(slice(None), 0),'v_b'] = params.val.vin
-        res.loc[0:reslen-1,'v_f'] = (res.v1.shift(-1) + res.v1)/2
-        res.loc[(slice(None), numx-1),'v_f'] = params.val.vout
+        res.loc[:,'v_b'] = (res.v1.shift(1) + res.v1)/2
+        res.loc[(slice(None),slice(None),res.dm0),'v_b'] = params.val.vin
+        res.loc[:,'v_f'] = (res.v1.shift(-1) + res.v1)/2
+        res.loc[(slice(None),slice(None),res.dmn),'v_f'] = params.val.vout
         #Dispersivity disp [l²/T]
-        res.loc[1:reslen,'disp_b'] = (res.disp.shift(1) + res.disp)/2
-        res.loc[(slice(None), 0),'disp_b'] = res.loc[(slice(None), 0),'disp']
-        res.loc[0:reslen-1,'disp_f'] = (res.disp.shift(-1) + res.disp)/2
-        res.loc[(slice(None), numx-1),'disp_f'] = res.loc[(slice(None), numx-1),'disp']
+        res.loc[:,'disp_b'] = (res.disp.shift(1) + res.disp)/2
+        res.loc[(slice(None),slice(None),res.dm0),'disp_b'] = res.loc[(slice(None),slice(None),res.dm0),'disp']
+        res.loc[:,'disp_f'] = (res.disp.shift(-1) + res.disp)/2
+        res.loc[(slice(None),slice(None),res.dmn),'disp_f'] = res.loc[(slice(None),slice(None),res.dmn),'disp']
         #Activity/Fugacity capacity Z [mol]
-        res.loc[1:reslen,'Z1_b'] = (res.Z1.shift(1) + res.Z1)/2
-        res.loc[(slice(None), 0),'Z1_b'] = res.loc[(slice(None),0),'Z1']
-        res.loc[0:reslen-1,'Z1_f'] = (res.Z1.shift(-1) + res.Z1)/2
-        res.loc[(slice(None), numx-1),'Z1_f'] = res.loc[(slice(None),numx-1),'Z1']
+        res.loc[:,'Z1_b'] = (res.Z1.shift(1) + res.Z1)/2
+        res.loc[(slice(None),slice(None),res.dm0),'Z1_b'] = res.loc[(slice(None),slice(None),res.dm0),'Z1']
+        res.loc[:,'Z1_f'] = (res.Z1.shift(-1) + res.Z1)/2
+        res.loc[(slice(None),slice(None),res.dmn),'Z1_f'] = res.loc[(slice(None),slice(None),res.dmn),'Z1']
         
         #DISCUS algorithm semi-lagrangian 1D ADRE from Manson & Wallis (2000) DOI: 10.1016/S0043-1354(00)00131-7
+        
         #Outside of the time loop, if flow is steady, or inside if flow changes
         #Courant number, used to determine time
-        res.loc[:,'c'] = res.v1*dt/res.dx
-        res.loc[:,'Pe'] = res.v1*res.dx/(res.disp) #Grid peclet number
+        res.loc[res.dm,'c'] = res.v1*dt/res.dx
+        res.loc[res.dm,'Pe'] = res.v1*res.dx/(res.disp) #Grid peclet number
         #time it takes to pass through each cell
-        res.loc[:,'del_0'] = res.dx/((res.v_b + res.v_f)/2)
+        res.loc[res.dm,'del_0'] = res.dx/((res.v_b + res.v_f)/2)
         #Set up dummy variables to be used inside the loop
-        delb_test = pd.Series().reindex_like(res)
+        delb_test = pd.Series().reindex_like(res[res.dm])
         delb_test[:] = 0 #Challenger time, accepted if <= dt
         #Time taken traversing full cells, not the final partial
-        delb_test1 = pd.Series().reindex_like(res) 
-        delrb_test = pd.Series().reindex_like(res)
+        delb_test1 = pd.Series().reindex_like(res[res.dm]) 
+        delrb_test = pd.Series().reindex_like(res[res.dm])
         delrb_test[:] = 0
         #"Dumb" distance variable
-        xb_test = pd.Series().reindex_like(res)
+        xb_test = pd.Series().reindex_like(res[res.dm])
         xb_test[:] = 0
         #This is a bit clunky, but basically this one will stay zero until del_test>dt
-        xb_test1 = pd.Series().reindex_like(res)
+        xb_test1 = pd.Series().reindex_like(res[res.dm])
         #Forward variables are the same as the backjward variables
         #but they will be shifted one fewer times (dels instead of dels+1)
         delf_test = delb_test.copy(deep = True)
@@ -354,7 +358,7 @@ class FugModel(metaclass=ABCMeta):
         #Distance from the forward and back faces
         res.loc[:,'xb'] = (res.x+res.x.shift(1))/2 - xb_test1
         res.loc[:,'xf'] = (res.x+res.x.shift(-1))/2 - xf_test1
-        res.loc[(slice(None),numx-1),'xf'] = params.val.L - xf_test1
+        res.loc[(slice(None),slice(None),res.dmn),'xf'] = params.val.L - xf_test1
         #For continuity, xb is the xf of the previous step
         mask = res.xb != res.groupby(level = 0)['xf'].shift(1)
         res.loc[mask,'xb'] = res.groupby(level = 0)['xf'].shift(1)
@@ -374,53 +378,57 @@ class FugModel(metaclass=ABCMeta):
         #Then, we advect one time step. To advect, just shift everything as calculated above.
         #We will use a cubic interpolation. Unfortunately, we have to unpack the data 
         #in order to get this to work.
-        chems = res.index.levels[0]
-        for ii in range(numchems):
+        for ii in chems:
             #Added the zero at the front as M_n(0) = 0
             
-            xx = np.append(0,res.loc[(chems[ii], slice(None)),'dx'].cumsum())#forward edge of each cell
-            yy = np.append(0,res.loc[(chems[ii], slice(None)),'M_n']) #Cumulative mass in the system
+            xx = np.append(0,res.loc[(ii,slice(None),res.dm),'dx'].cumsum())#forward edge of each cell
+            yy = np.append(0,res.loc[(ii,slice(None),res.dm),'M_n']) #Cumulative mass in the system
             """
             #Testing to see if multiplying a and Z better
-            xx = np.array(res.loc[(chems[ii], slice(None)),'x'])#Middle
-            at = np.array(res.loc[(chems[ii], slice(None)),'a1_t'])
-            Z1 = np.array(res.loc[(chems[ii], slice(None)),'Z1'])
+            xx = np.array(res.loc[(chems, slice(None)),'x'])#Middle
+            at = np.array(res.loc[(chems, slice(None)),'a1_t'])
+            Z1 = np.array(res.loc[(chems, slice(None)),'Z1'])
             f = interp1d(xx,at,kind='cubic',fill_value='extrapolate') #a values
             f1 = interp1d(xx,Z1,kind='cubic',fill_value='extrapolate') #Z values
-            res.loc[(chems[ii], slice(None)),'M_star'] = f(res.loc[(chems[ii], slice(None)),'xbfav'])\
-            *f1(res.loc[(chems[ii], slice(None)),'xbfav'])*res.loc[(chems[ii], slice(None)),'V_doi']
+            res.loc[(chems, slice(None)),'M_star'] = f(res.loc[(chems, slice(None)),'xbfav'])\
+            *f1(res.loc[(chems, slice(None)),'xbfav'])*res.loc[(chems, slice(None)),'V_doi']
             """
             f = interp1d(xx,yy,kind='cubic',fill_value='extrapolate')
             f1 = interp1d(xx,yy,kind='linear',fill_value='extrapolate')#Linear interpolation where cubic fails
-            res.loc[(chems[ii], slice(None)),'M_star'] = f(res.loc[(chems[ii], slice(None)),'xf'])\
-            - f(res.loc[(chems[ii], slice(None)),'xb'])
-            res.loc[(chems[ii], slice(None)),'M_xf'] = f(res.loc[(chems[ii], slice(None)),'xf']) #Mass at xf, used to determine advection out of the system
+            res.loc[(ii,slice(None),res.dm),'M_star'] = f(res.loc[(ii,slice(None),res.dm),'xf'])\
+            - f(res.loc[(ii,slice(None),res.dm),'xb'])
+            res.loc[(ii,slice(None),res.dm),'M_xf'] = f(res.loc[(ii,slice(None),res.dm),'xf']) #Mass at xf, used to determine advection out of the system
             #check if the cubic interpolation failed (<0), use linear in those places.
-            mask = res.loc[(chems[ii], slice(None)),'M_star'] < 0
+            mask = res.loc[(ii,slice(None),res.dm),'M_star'] < 0
             if sum(mask) == 0: #Override with linear to see if this is causing instability
                 #YOMAMA = 'FAT'
-                res.loc[(chems[ii], slice(None)),'M_star'] = f1(res.loc[(chems[ii], slice(None)),'xf'])\
-                - f1(res.loc[(chems[ii], slice(None)),'xb'])
-                res.loc[(chems[ii], slice(None)),'M_xf'] = f1(res.loc[(chems[ii], slice(None)),'xf']) 
+                res.loc[(ii,slice(None),res.dm),'M_star'] = f1(res.loc[(ii,slice(None),res.dm),'xf'])\
+                - f1(res.loc[(ii,slice(None),res.dm),'xb'])
+                res.loc[(ii,slice(None),res.dm),'M_xf'] = f1(res.loc[(ii,slice(None),res.dm),'xf']) 
             if sum(mask) != 0:
                 #pdb.set_trace()
                 #Only replace where cubic failed
-                #res.loc[(chems[ii], mask),'M_star'] = f1(res.loc[(chems[ii],mask),'xf'])\
-                #- f1(res.loc[(chems[ii], mask),'xb'])
+                #res.loc[(chems, mask),'M_star'] = f1(res.loc[(chems,mask),'xf'])\
+                #- f1(res.loc[(chems, mask),'xb'])
                 #Replace everywhere
-                res.loc[(chems[ii], slice(None)),'M_star'] = f1(res.loc[(chems[ii], slice(None)),'xf'])\
-                - f1(res.loc[(chems[ii], slice(None)),'xb'])
-                res.loc[(chems[ii], slice(None)),'M_xf'] = f1(res.loc[(chems[ii], slice(None)),'xf']) #Mass at xf, used to determine advection out of the system
+                res.loc[(ii,slice(None),res.dm),'M_star'] = f1(res.loc[(ii,slice(None),res.dm),'xf'])\
+                - f1(res.loc[(ii,slice(None),res.dm),'xb'])
+                res.loc[(ii,slice(None),res.dm),'M_xf'] = f1(res.loc[(ii,slice(None),res.dm),'xf']) #Mass at xf, used to determine advection out of the system
         #US boundary conditions
         #Case 1 - both xb and xf are outside the domain. 
-        #All mass comes in at the influent activity & Z value (set to the first cell)
+        #All mass (moles) comes in at the influent activity & Z value (set to the first cell)
         #pdb.set_trace()
         mask = (res.xb == 0) & (res.xf == 0)
         M_us = 0
         res.loc[:,'inp_mass1'] = 0 #initialize
         if sum(mask) != 0:
             #res[mask].groupby(level = 0)['del_0'].sum()
-            res.loc[mask,'M_star'] = res.bc_us[mask]*params.val.Qin*res.Z1[mask]*res.del_0[mask]#Time to traverse cell * influent
+            if params.val.Pulse == True:
+                M_in = res.Min[mask]/(res.Qin[mask])*res.del_0[mask] #Mass from pulse in cells
+                M_in[np.isnan(M_in)] = 0 #If Qin is zero
+                res.loc[mask,'M_star'] = M_in
+            else:
+                res.loc[mask,'M_star'] = res.bc_us[mask]*params.val.Qin*res.Z1[mask]*res.del_0[mask]#Time to traverse cell * influent
             #Record mass input from outside system for the water compartment here
             res.loc[mask,'inp_mass1'] = res.loc[mask,'M_star']
             #res.loc[mask,'M_star'] = res.bc_us*res.V1[mask]*res.Z1[mask] #Everything in these cells comes from outside of the domain
@@ -428,25 +436,37 @@ class FugModel(metaclass=ABCMeta):
         #Case 2 - xb is out of the range, but xf is in
         #Need to compute the sum of a spatial integral from x = 0 to xf and then the rest is temporal with the inlet
         mask = (res.xb == 0) & (res.xf != 0)
-        slope = np.array(res.M_n[(slice(None),0)])/np.array((res.dx[(slice(None),0)]))
+        slope = res.loc[(slice(None),slice(None),res.dm0),'M_n']/res.loc[(slice(None),slice(None),res.dm0),'dx'] #Need to ensure dimensions agree
         if sum(mask) != 0:
-            M_x = slope*np.array(res.xf[mask])
+            M_x = slope.reindex(res.loc[mask,'xf'].index,method = 'ffill')*np.array(res.xf[mask])
             #For this temporal piece, we are going to just make the mass balance between the
             #c1 BCs and this case, which will only ever have one cell as long as Xf(i-1) = xb(i)
-            M_t =  params.val.Qin*res.bc_us[slice(None),0]*dt*res.Z1[slice(None),0] - M_us
+            if params.val.Pulse == True:
+                try:
+                    M_t = res.Min[mask] - np.array(M_us) #Any remaining mass goes in this cell
+                    M_t[np.isnan(M_t)] = 0 #If Qin is zero
+                except ValueError:
+                    M_t = 0
+                    #M_t[np.isnan(M_t)] = 0
+            else:
+                M_t =  params.val.Qin*res.loc[(slice(None),slice(None),res.dm0),'bc_us']\
+                *dt*res.loc[(slice(None),slice(None),res.dm0),'Z1'] - np.array(M_us)
             #M_t =  res.bc_us[mask]*params.val.Qin*np.array(res.Z1[slice(None),0])*np.array((dt-delf_test1.shift(1)[mask]))
             res.loc[mask,'M_star'] = np.array(M_x + M_t)
-            res.loc[mask,'inp_mass1'] = np.array(M_t) #Mass from outside system to the water compartment)
+            res.loc[mask,'inp_mass1'] = np.array(M_t) #Mass (moles) from outside system to the water compartment)
         #Case 3 - too close to origin for cubic interpolation, so we will use linear interpolation
-        #Not always going to occur, and since slope is a vector dimensions might not agree
+        #Not always going to occur
         mask = np.isnan(res.M_star)
         if sum(mask) !=0:
-            res.loc[mask,'M_star'] = slope * (res.xf[mask] - res.xb[mask])
+            res.loc[mask,'M_star'] = slope.reindex(res.loc[mask,'M_star'].index,method = 'ffill') * (res.xf[mask] - res.xb[mask])
         #Divide out to get back to activity/fugacity entering from advection
         res.loc[:,'a_star'] = res.M_star / res.Z1 / res.V1
         #Error checking, does the advection part work?
         #res.loc[:,'a1_t1'] = res.a_star 
-                
+        #res.loc[:,'a2_t1'] = 0
+        
+
+        
         #Finally, we can set up & solve our implicit portion!
         #This is based on the methods of Manson and Wallis (2000) and Kilic & Aral (2009)
         #Define the spatial weighting term (P) 
@@ -455,11 +475,14 @@ class FugModel(metaclass=ABCMeta):
         #b for the (i-1) spacial step, m for (i), f for (i+1)
         #the back (b) term acting on x(i-1)
         res.loc[:,'b'] = 2*res.P*res.V1_b*res.Z1_b*res.disp_b/(res.dx + res.groupby(level = 0)['dx'].shift(1))
-        #To deal with the upstream boundary condition, we can simply set dx(i-1) = dx so that:
-        res.loc[(slice(None),0),'b'] = 2*res.P*res.V1_b*res.Z1_b*res.disp_b/(res.dx)
+        #To deal with the upstream boundary condition:
+        if params.val.Pulse == False: #For continuous influx/flux allowed across U/S boundary, we can simply set dx(i-1) = dx so that:
+            res.loc[(slice(None),slice(None),res.dm0),'b'] = 2*res.P*res.V1_b*res.Z1_b*res.disp_b/(res.dx)
+        else:#For a pulse of Min we assume that none advects upstream, zero flux BC
+            res.loc[(slice(None),slice(None),res.dm0),'b'] = 0
         #forward (f) term acting on x(i+1)
         res.loc[:,'f'] = 2*res.P*res.V1_f*res.Z1_f*res.disp_f/(res.dx + res.groupby(level = 0)['dx'].shift(-1))
-        res.loc[(slice(None),numx-1),'f'] = 0 #No diffusion across downstream boundary
+        res.loc[(slice(None),slice(None),res.dmn),'f'] = 0 #No diffusion across downstream boundary
         #Middle (m) term acting on x(i) - this will be subracted in the matrix (-m*ai)
         #Upstream and downstream BCs have been dealt with in the b and f terms
         res.loc[:,'m'] = res.f+res.b+dt*res.DT1+res.V1*res.Z1
@@ -469,21 +492,20 @@ class FugModel(metaclass=ABCMeta):
         #of numc * i x numc * i in dimension. Then we stack these on the first axis
         #so that our matrix is numchem x numx*numc * numx*numc
         #Initialize transport matrix and RHS vector (inp)
-        mat = np.zeros([numchems,numx*numc,numx*numc])
-        inp = np.zeros([numchems,numx*numc])
+        mat = np.zeros([numchems,numx*len(numc),numx*len(numc)])
+        inp = np.zeros([numchems,numx*len(numc)])
         #FILL THE MATRICES
         #First, define where the matrix values will go.
-        m_vals = np.arange(0,numx*numc,numc)
-        b_vals = np.arange(numc,numx*numc,numc)
+        m_vals = np.arange(0,numx*len(numc),len(numc))
+        b_vals = np.arange(len(numc),numx*len(numc),len(numc))
         #Then, we can set the ADRE terms. Since there will always be three no need for a loop.
         mat[:,m_vals,m_vals] = -np.array(res.m).reshape(numchems,numx)
-        mat[:,b_vals,m_vals[0:numx-1]] = np.array(res.loc[(slice(None),slice(1,numx)),'b']).reshape(numchems,numx-1)
-        mat[:,m_vals[0:numx-1],b_vals] = np.array(res.loc[(slice(None),slice(0,numx-2)),'f']).reshape(numchems,numx-1)
-        #Set up the inputs in the advective cell, without anything from the location specific inputs
-
-        #Next, set D values and inp values. This has to be in a loop as the number of compartments might change
+        mat[:,b_vals,m_vals[0:numx-1]] = np.array(res.loc[(slice(None),slice(None),slice(1,numx)),'b']).reshape(numchems,numx-1)
+        mat[:,m_vals[0:numx-1],b_vals] = np.array(res.loc[(slice(None),slice(None),slice(0,numx-2)),'f']).reshape(numchems,numx-1)
+        
+        #Next, set D values and inp values. In the loop as numc might change
         j,k = [0,0]
-        for j in range(0,numc): #j is the row index
+        for j in range(0,len(numc)): #j is the row index
             inp_val = 'inp_' +str(j+1)
             if inp_val not in res.columns: #If no inputs given assume zero
                 res.loc[:,inp_val] = 0
@@ -497,7 +519,7 @@ class FugModel(metaclass=ABCMeta):
                 - np.array(res.loc[:,a_val]).reshape(numchems,numx)\
                 *np.array(res.loc[:,Z_val]).reshape(numchems,numx)\
                 *np.array(res.loc[:,V_val]).reshape(numchems,numx)
-            for k in range(0,numc): #k is the column index
+            for k in range(0,len(numc)): #k is the column index
                 if (j == k): 
                     if j == 0:#Skip DT1 as it is in the m value
                         pass
@@ -514,25 +536,31 @@ class FugModel(metaclass=ABCMeta):
                         pass
                     mat[:,m_vals+j,m_vals+k] = dt * np.array(res.loc[:,D_val]).reshape(numchems,numx)
         #Upstream boundary - need to add the diffusion term. DS boundary is dealt with already
-        inp[:,0] += -res.b[slice(None),0]*(res.bc_us[slice(None),0] - res.a_star[slice(None),0]) #Activity gradient is ~bc_us - a_star
-        res.loc[(slice(None),0),'inp_mass1']  += np.array(res.b[slice(None),0]*(res.bc_us[slice(None),0] - res.a_star[slice(None),0])) #Mass added from diffusion
+        if params.val.Pulse == False: #Not worrying about this for mass pulse,it isn't diffusing upstream out of the system
+            inp[:,0] += -res.loc[(slice(None),slice(None),res.dm0),'b']*(res.loc[(slice(None),slice(None),res.dm0),'bc_us'] - res.loc[(slice(None),slice(None),res.dm0),'a_star'])#Activity gradient is ~bc_us - a_star
+            res.loc[(slice(None),slice(None),res.dm0),'inp_mass1']  += np.array(res.loc[(slice(None),slice(None),res.dm0),'b']*(res.loc[(slice(None),slice(None),res.dm0),'bc_us'] - res.loc[(slice(None),slice(None),res.dm0),'a_star'])) #Mass added from diffusion
+        #else:
+            
         #Now, we will solve the matrix for each compound simultaneously (each D-matrix and input is stacked by compound)
         matsol = np.linalg.solve(mat,inp)
         #Error checking - Check solutions ~ inputs
         #np.dot(mat[0],matsol[0]) - inp[0]
         #Loop through the compartments and put the output values into our output res dataframe
         #
-        for j in range(numc):
-            a_val, inp_mass = 'a'+str(j+1) + '_t1','inp_mass'+str(j+1)
-            res.loc[:,a_val] = matsol.reshape(numx*numchems,numc)[:,j]
+        for j in range(len(numc)):
+            a_val, M_val, inp_mass = 'a'+str(j+1) + '_t1','M'+str(j+1) + '_t1','inp_mass'+str(j+1)
+            V_val, Z_val =  'V' + str(j+1), 'Z' + str(j+1)
+            res.loc[(slice(None),slice(None),slice(None)),a_val] = matsol.reshape(numx*numchems,len(numc))[:,j]
+            res.loc[(slice(None),slice(None),slice(None)),M_val] = res.loc[(slice(None),slice(None),slice(None)),a_val]\
+            *res.loc[(slice(None),slice(None),slice(None)),V_val]*res.loc[(slice(None),slice(None),slice(None)),Z_val] 
             if j is not 0:#Skip water compartment
                 pdb.set_trace
-                res.loc[:,inp_mass] = dt*res.loc[:,inp_val]
+                res.loc[(slice(None),slice(None),slice(None)),inp_mass] = dt*res.loc[:,inp_val]
             if sum(res.loc[:,a_val]<0) >0: #If solution gives negative values flag it
                 pdb.set_trace()
                 
-        #xxx = 1   
-         
+        #xxx = 1
+        
         return res
 
 
