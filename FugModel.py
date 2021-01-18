@@ -262,12 +262,16 @@ class FugModel(metaclass=ABCMeta):
         res = ic.copy(deep=True)
         chems = res.index.levels[0]
         numchems = len(chems)
-        numx = len(res[res.dm].index.levels[2]) #Number of discretized xs
+        numx = len(res[res.dm].index.levels[2]) #Number of discretized xs. THIS IS BROKEN
         #Set up masks for the discretized 0th and last cells
         res.loc[:,'dm0'] = False
         res.loc[:,'dmn'] = False
+        res.loc[:,'dmd'] = False
         res.loc[(slice(None),slice(None),0),'dm0'] = True #0th discretized cell
-        res.loc[(slice(None),slice(None),slice(numx-1,numx)),'dmn'] = True #Last discretized cell
+        res.loc[(slice(None),slice(None),slice(numx-2,numx-2)),'dmn'] = True #Last discretized cell excluding drain
+        res.loc[(slice(None),slice(None),slice(numx-1,numx)),'dmd'] = True #Drainage cell
+        #We are going to declare the drainage cell non-discretized for the purposes of the ADRE - advection only into it
+        res.loc[res.dmd==True,'dm'] = False
         if 'dx' not in res.columns: #
             res.loc[:,'dx'] = res.groupby(level = 0)['x'].diff()
             res.loc[(slice(None),0),'dx'] = res.x[0]
@@ -395,16 +399,17 @@ class FugModel(metaclass=ABCMeta):
             """
             f = interp1d(xx,yy,kind='cubic',fill_value='extrapolate')
             f1 = interp1d(xx,yy,kind='linear',fill_value='extrapolate')#Linear interpolation where cubic fails
+            #Determine mass at xf and xb
+            res.loc[(ii,slice(None),res.dm),'M_xf'] = f(res.loc[(ii,slice(None),res.dm),'xf']) 
+            res.loc[(ii,slice(None),res.dm),'M_xb'] = f(res.loc[(ii,slice(None),res.dm),'xb']) 
             res.loc[(ii,slice(None),res.dm),'M_star'] = f(res.loc[(ii,slice(None),res.dm),'xf'])\
             - f(res.loc[(ii,slice(None),res.dm),'xb'])
-            res.loc[(ii,slice(None),res.dm),'M_xf'] = f(res.loc[(ii,slice(None),res.dm),'xf']) #Mass at xf, used to determine advection out of the system
+            
             #check if the cubic interpolation failed (<0), use linear in those places.
             mask = res.loc[(ii,slice(None),res.dm),'M_star'] < 0
             if sum(mask) == 0: #Override with linear to see if this is causing instability
                 #YOMAMA = 'FAT'
-                res.loc[(ii,slice(None),res.dm),'M_star'] = f1(res.loc[(ii,slice(None),res.dm),'xf'])\
-                - f1(res.loc[(ii,slice(None),res.dm),'xb'])
-                res.loc[(ii,slice(None),res.dm),'M_xf'] = f1(res.loc[(ii,slice(None),res.dm),'xf']) 
+                pass 
             if sum(mask) != 0:
                 #pdb.set_trace()
                 #Only replace where cubic failed
@@ -438,7 +443,7 @@ class FugModel(metaclass=ABCMeta):
         mask = (res.xb == 0) & (res.xf != 0)
         slope = res.loc[(slice(None),slice(None),res.dm0),'M_n']/res.loc[(slice(None),slice(None),res.dm0),'dx'] #Need to ensure dimensions agree
         if sum(mask) != 0:
-            M_x = slope.reindex(res.loc[mask,'xf'].index,method = 'ffill')*np.array(res.xf[mask])
+            #M_x = slope.reindex(res.loc[mask,'xf'].index,method = 'ffill')*np.array(res.xf[mask]) #Obsolete - just M_xf
             #For this temporal piece, we are going to just make the mass balance between the
             #c1 BCs and this case, which will only ever have one cell as long as Xf(i-1) = xb(i)
             if params.val.Pulse == True:
@@ -452,21 +457,33 @@ class FugModel(metaclass=ABCMeta):
                 M_t =  params.val.Qin*res.loc[(slice(None),slice(None),res.dm0),'bc_us']\
                 *dt*res.loc[(slice(None),slice(None),res.dm0),'Z1'] - np.array(M_us)
             #M_t =  res.bc_us[mask]*params.val.Qin*np.array(res.Z1[slice(None),0])*np.array((dt-delf_test1.shift(1)[mask]))
-            res.loc[mask,'M_star'] = np.array(M_x + M_t)
+            res.loc[mask,'M_star'] = np.array(res[mask].M_xf + M_t)
             res.loc[mask,'inp_mass1'] = np.array(M_t) #Mass (moles) from outside system to the water compartment)
         #Case 3 - too close to origin for cubic interpolation, so we will use linear interpolation
         #Not always going to occur
-        mask = np.isnan(res.M_star)
+        mask = (np.isnan(res.M_star)) & (~np.isnan(res.Pe)) #Peclet check excludes drain cell
         if sum(mask) !=0:
             res.loc[mask,'M_star'] = slope.reindex(res.loc[mask,'M_star'].index,method = 'ffill') * (res.xf[mask] - res.xb[mask])
-        #Divide out to get back to activity/fugacity entering from advection
+        #Define advective flow for the drainage cell. We are going to make flux in happen explicitly, but mass flux out will be implicit
+        #to prevent negative mass.
+        #OPTIONS - have advection handled implicitly or have it explicit.
+        #When we have explicit - mass out >> mass in. BAD
+        #pdb.set_trace()
+        res.loc[res.dmd,'M_star']  = res.loc[res.dmd,'M_i'] \
+        +np.array(res.loc[res.dmn,'M_n'] - res.loc[res.dmn,'M_xf'])\
+        - np.array(dt*(res.loc[res.dmd,'a1_t']*res.loc[res.dmd,'Z1']*res.loc[res.dmd,'Qout']))
+        #res.loc[:,'M_star'].sum()/(res.loc[:,'M_i'].sum()-np.array(dt*(res.loc[res.dmd,'a1_t']*res.loc[res.dmd,'Z1']*res.loc[res.dmd,'Qout']))) #Code to check if the mass from the advection step balances
+        #- np.array(dt*(res.loc[res.dmd,'a1_t']*res.loc[res.dmd,'D_waterexf']))
+        #Divide out to get back to activity/fugacity from advection
         res.loc[:,'a_star'] = res.M_star / res.Z1 / res.V1
         #Error checking, does the advection part work?
-        #res.loc[:,'a1_t1'] = res.a_star 
-        #res.loc[:,'a2_t1'] = 0
         
-
-        
+        '''
+        res.loc[:,'a1_t1'] = res.a_star 
+        res.loc[:,'a2_t1'] = 0
+        res.loc[:,'M1_t1'] = res.M_star 
+        res.loc[:,'M2_t1'] = 0
+        '''
         #Finally, we can set up & solve our implicit portion!
         #This is based on the methods of Manson and Wallis (2000) and Kilic & Aral (2009)
         #Define the spatial weighting term (P) 
@@ -475,6 +492,8 @@ class FugModel(metaclass=ABCMeta):
         #b for the (i-1) spacial step, m for (i), f for (i+1)
         #the back (b) term acting on x(i-1)
         res.loc[:,'b'] = 2*res.P*res.V1_b*res.Z1_b*res.disp_b/(res.dx + res.groupby(level = 0)['dx'].shift(1))
+        #Set drainage zone to zero - no back diffusion.
+        res.loc[res.dmd,'b'] = 0
         #To deal with the upstream boundary condition:
         if params.val.Pulse == False: #For continuous influx/flux allowed across U/S boundary, we can simply set dx(i-1) = dx so that:
             res.loc[(slice(None),slice(None),res.dm0),'b'] = 2*res.P*res.V1_b*res.Z1_b*res.disp_b/(res.dx)
@@ -483,9 +502,13 @@ class FugModel(metaclass=ABCMeta):
         #forward (f) term acting on x(i+1)
         res.loc[:,'f'] = 2*res.P*res.V1_f*res.Z1_f*res.disp_f/(res.dx + res.groupby(level = 0)['dx'].shift(-1))
         res.loc[(slice(None),slice(None),res.dmn),'f'] = 0 #No diffusion across downstream boundary
+        res.loc[res.dmd,'f'] = 0 #Or out of drainage zone
         #Middle (m) term acting on x(i) - this will be subracted in the matrix (-m*ai)
         #Upstream and downstream BCs have been dealt with in the b and f terms
         res.loc[:,'m'] = res.f+res.b+dt*res.DT1+res.V1*res.Z1
+        #For the drainage zone, m includes advective flow out the pipe - calculated implicitly to make conservative.
+        res.loc[res.dmd,'m'] = dt*res.DT1+res.V1*res.Z1#+dt*(res.loc[res.dmd,'Z1']*res.loc[res.dmd,'Qout'])
+        #res.loc[res.dmd,'m'] = 0 #Turn off drainage other processes
         #These will make the matrix. For each spatial step, i, there will be
         #numc activities that we will track. So, in a system of water, air and sediment
         #you would have aw1, as1, aa1, aw2,as2,aa3...awnumc,asnumc,aanumc, leading to a matrix
@@ -496,13 +519,13 @@ class FugModel(metaclass=ABCMeta):
         inp = np.zeros([numchems,numx*len(numc)])
         #FILL THE MATRICES
         #First, define where the matrix values will go.
-        m_vals = np.arange(0,numx*len(numc),len(numc))
+        m_vals = np.arange(0,(numx)*len(numc),len(numc))
         b_vals = np.arange(len(numc),numx*len(numc),len(numc))
         #Then, we can set the ADRE terms. Since there will always be three no need for a loop.
         mat[:,m_vals,m_vals] = -np.array(res.m).reshape(numchems,numx)
         mat[:,b_vals,m_vals[0:numx-1]] = np.array(res.loc[(slice(None),slice(None),slice(1,numx)),'b']).reshape(numchems,numx-1)
         mat[:,m_vals[0:numx-1],b_vals] = np.array(res.loc[(slice(None),slice(None),slice(0,numx-2)),'f']).reshape(numchems,numx-1)
-        
+        #mat[:,m_vals[numx-1],b_vals]
         #Next, set D values and inp values. In the loop as numc might change
         j,k = [0,0]
         for j in range(0,len(numc)): #j is the row index
@@ -553,14 +576,15 @@ class FugModel(metaclass=ABCMeta):
             res.loc[(slice(None),slice(None),slice(None)),a_val] = matsol.reshape(numx*numchems,len(numc))[:,j]
             res.loc[(slice(None),slice(None),slice(None)),M_val] = res.loc[(slice(None),slice(None),slice(None)),a_val]\
             *res.loc[(slice(None),slice(None),slice(None)),V_val]*res.loc[(slice(None),slice(None),slice(None)),Z_val] 
-            if j is not 0:#Skip water compartment
-                pdb.set_trace
+            if j != 0:#Skip water compartment
+                #pdb.set_trace
                 res.loc[(slice(None),slice(None),slice(None)),inp_mass] = dt*res.loc[:,inp_val]
             if sum(res.loc[:,a_val]<0) >0: #If solution gives negative values flag it
                 pdb.set_trace()
+                xxx = 'poop'
                 
         #xxx = 1
-        
+        #'''
         return res
 
 

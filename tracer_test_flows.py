@@ -17,7 +17,7 @@ import hydroeval #For the efficiency
 from hydroeval import kge #Kling-Gupta efficiency (Kling-Gupta et al., 2009)
 #plt.style.use("ggplot")
 #BC_2 Being used to test immobile fraction impact
-params = pd.read_excel('params_BC_3.xlsx',index_col = 0) 
+params = pd.read_excel('params_BC_5.xlsx',index_col = 0) 
 locsumm = pd.read_excel('Kortright_BC.xlsx',index_col = 0)
 locsumm.iloc[:,slice(0,14)] = locsumm.astype('float') #Convert any ints to floats 
 #locsumm = pd.read_excel('Oro_Loma_1.xlsx',index_col = 0) 
@@ -25,11 +25,14 @@ chemsumm = pd.read_excel('Kortright_CHEMSUMM.xlsx',index_col = 0)
 #chemsumm = pd.read_excel('OPECHEMSUMM.xlsx',index_col =0)
 #emsumm = pd.read_excel('PROBLEMCHEMSUMM.xlsx',index_col = 0)
 #chemsumm = pd.read_excel('EHDPPCHEMSUMM.xlsx',index_col = 0)
-timeseries = pd.read_excel('timeseries_tracertest_Kortright.xlsx')
+#timeseries = pd.read_excel('timeseries_tracertest_Kortright_valve.xlsx')
+#timeseries = pd.read_excel('timeseries_tracertest_Kortright_valve.xlsx')
+timeseries = pd.read_excel('timeseries_tracertestExtended_Kortright_valve.xlsx')
+#timeseries = pd.read_excel('timeseries_LatterEvent_Kortright.xlsx')
 #Truncate timeseries if you want to run fewer
 numc = np.array(np.concatenate([locsumm.index[0:2].values]),dtype = 'str')
 pdb.set_trace()
-run_period = 708.98+3.5 #if run_period/dt not a whole number there will be a problem
+#run_period = 708.98+3.5 #if run_period/dt not a whole number there will be a problem
 ''' To truncate the timeseries
 dt = timeseries.time[1] - timeseries.time[0]
 totalt = int(math.ceil(run_period/dt))
@@ -77,26 +80,28 @@ yvar = 'Q_out'
 comp1 = 'water'
 comp2 = 'drain'
 comp3 = 'pond'
-shiftdist = 10
-pltdata = res_time.loc[(slice(210,631),comp2),:] #To plot 
+shiftdist = 12
+pltdata = res_time.loc[(slice(210,6356),comp2),:] #To plot 
 #res_time.loc[(plttime,slice(None),slice(None)),slice(None)] #Just at plttime
 ylim = [0, 4]
-xlim = [210, 631]
+#xlim = [210, 6356]
 ylabel = 'Concentration (μg/g dw)'
 xlabel = 'Time'
 #pltdata = res_time #All times at once
 fig = plt.figure(figsize=(14,8))
 #fig = plt.figure(figsize=(14,8))
-ax = sns.lineplot(x = pltdata.index.get_level_values(0),hue = pltdata.index.get_level_values(1),y=yvar,data = pltdata)
+#ax = sns.lineplot(x = pltdata.index.get_level_values(0),hue = pltdata.index.get_level_values(1),y=yvar,data = pltdata)
+ax = sns.lineplot(x = pltdata.loc[(slice(None),'drain'),'time'],hue = pltdata.index.get_level_values(1),y=yvar,data = pltdata)
+
 ax.set_ylim(ylim)#
-ax.set_xlim(xlim)
+#ax.set_xlim(xlim)
 ax.tick_params(axis='both', which='major', labelsize=15)
 
 #Finally, let's see how good this flow-routing has been
-shiftdist = 12 #To account for time to flow through pipe
 timeseries.loc[:,'Q_drainout']= np.array(res_time.loc[(slice(None),'drain'),'Q_out'].shift(shiftdist))
 timeseries.loc[np.isnan(timeseries.Q_drainout),'Q_drainout'] = 0
 KGE = hydroeval.evaluator(kge, np.array(timeseries.loc[timeseries.time>0,'Q_drainout']),\
                           np.array(timeseries.loc[timeseries.time>0,'Qout (measured)']))
-outpath ='D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/Flow_time_tracertest.pkl'
+#outpath ='D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/Flow_time_tracertest_extended.pkl'
+outpath ='D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/Flow_time_tracertest_630max.pkl'
 res_time.to_pickle(outpath)
