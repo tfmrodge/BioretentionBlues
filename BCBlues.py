@@ -79,7 +79,7 @@ class BCBlues(SubsurfaceSinks):
         res.loc[len(res.index)-1,'dx'] = locsumm.loc['drain','Depth']
 
         if len(numc) > 2: #Don't worry about this for the 2-compartment version
-            res = res.append(pd.DataFrame([999],columns = ['x'])) #Add a final x for those that aren't discretized
+            res = res.append(pd.DataFrame([999],columns = ['x']), ignore_index=True) #Add a final x for those that aren't discretized
         #res = pd.DataFrame(np.array(res),columns = ['x'])
 
         #pdb.set_trace()
@@ -113,7 +113,7 @@ class BCBlues(SubsurfaceSinks):
         +locsumm.loc['drain','Depth']/2)
         res.loc[res.x==999,'dm'] = False
         #numx = res[res.dm].index.levels[1] #count 
-        #Now, we are going to define the submerged zone as a single compartment containing the topsoil and filter
+        #Now, we are going to define the soil as a single compartment containing the topsoil and filter
         res.loc[:,'maskts'] = res.x < timeseries.loc[(slice(None),'topsoil'),'Depth'].reindex(res.index,method = 'bfill')
         res.loc[:,'maskss'] = (res.maskts ^ res.dm)
         res.loc[res.maskts,'porositywater'] = timeseries.loc[(slice(None),'topsoil'),'Porosity'].reindex(res.index,method = 'bfill')
@@ -164,6 +164,10 @@ class BCBlues(SubsurfaceSinks):
         #-timeseries.loc[(slice(None),'drain'),'Q_towater'].reindex(res.index,method = 'bfill')
         res.loc[(slice(None),numx[-1]+1),'Qin'] = timeseries.loc[(slice(None),'water'),'Q_todrain'].reindex(res.index,method = 'bfill')\
         -timeseries.loc[(slice(None),'drain'),'Q_towater'].reindex(res.index,method = 'bfill')
+        #We will put the flow going into the ponding zone into the non-discretized cell.
+        #pdb.set_trace()
+        if 'pond' in numc:    
+            res.loc[(slice(None),numx[-1]+2),'Qin'] = timeseries.loc[(slice(None),'pond'),'Q_in'].reindex(res.index,method = 'bfill')
         #For the drainage compartment assume Qin = Qwater (it either exfiltrates or goes out the pipe)
         res.loc[(slice(None),numx[-1]+1),'Qwater'] = res.loc[(slice(None),numx[-1]+1),'Qin']
         #Assume ET flow from filter zone only, assume proportional to water flow
@@ -176,6 +180,9 @@ class BCBlues(SubsurfaceSinks):
         ETprop[np.isnan(ETprop)] = 0 #returns nan if there is no flow so replace with 0
         res.loc[res.dm,'Qet'] = ETprop/len(res.index.levels[1]) * res.Qwater
         res.loc[(slice(None),numx[-1]+1),'Qet'] = 0
+        #Qet in plants is additive from bottom to top at each time step.
+        #pdb.set_trace()
+        res.loc[res.dm,'Qetplant'] = res.Qet[::-1].groupby(level=[0]).cumsum()
         res.loc[:,'Qetsubsoil'] = (1-params.val.froot_top)*res.Qet
         res.loc[:,'Qettopsoil'] = (params.val.froot_top)*res.Qet
         #This is exfiltration across the entire filter zone
@@ -202,9 +209,10 @@ class BCBlues(SubsurfaceSinks):
         #dV = V + Qin - Qout - Qet - Qexf it follows that (for the sum of cells, n):
         #sum(dV,n) = sum(V,n) + sum(Qin,n) - sum(Qout,n) -sum(Qet,n) - sum(Qexf,n)
         #and therefore applying our allocated flows across the x values will give a mass conservative result.
-        pdb.set_trace()
+        #pdb.set_trace()
         dt = timeseries.loc[(slice(None),'pond'),'time'] - timeseries.loc[(slice(None),'pond'),'time'].shift(1)
-        dt[np.isnan(dt)] = dt[1]
+        dt[np.isnan(dt)] = dt.iloc[1]
+        
         #Matrix solution to volumes. Changed from running through each t to running through each x, hopefully faster.
         numt = len(res.index.levels[0])
         mat = np.zeros([max(numx)+1,numt,numt],dtype=np.int8)
@@ -215,7 +223,6 @@ class BCBlues(SubsurfaceSinks):
         mat[:,b_vals,m_vals[0:numt-1]] = -1
         #Set last one manually
         #mat[:,numt-1,numt-2] = -1
-
         for x in numx:
             #RHS of the equation are the net ins and outs from the cell.
             inp[x,:] = np.array((res.loc[(slice(None),0),'Qin']+res.loc[(slice(None),0),'Qcap']-res.loc[(slice(None),0),'Qet']\
@@ -254,27 +261,34 @@ class BCBlues(SubsurfaceSinks):
         res.loc[(slice(None),numx[-1]+1),'Vroot'] = 0 #Total root volume per m² ground area
         res.loc[(slice(None),numx[-1]+1),'Aroot'] = 0 #Total root area per m² ground area        
         #Now we loop through the compartments to set everything else.
-        #Let's see what happens here if we change the drainage zone to part of the dm
+        #Change the drainage zone to part of the dm 
         res.loc[(slice(None),numx[-1]+1),'dm'] = True
         #pdb.set_trace()
-        for j in numc:
+        for jind, j in enumerate(numc):
             #Area (A), Volume (V), Density (rho), organic fraction (foc), ionic strength (Ij)
             #water fraction (fwat), air fraction (fair), temperature (tempj), pH (phj)
-            jind = np.where(numc==j)[0]+1 #The compartment number, for the advection term
-            Aj, Vj, Vjind, rhoj, focj, Ij = 'A' + str(j), 'V' + str(j), 'V' + str(jind[0]),'rho' + str(j),'foc' + str(j),'I' + str(j)
+            jind = jind+1 #The compartment number, for the advection term
+            Aj, Vj, Vjind, rhoj, focj, Ij = 'A' + str(j), 'V' + str(j), 'V' + str(jind),'rho' + str(j),'foc' + str(j),'I' + str(j)
             fwatj, fairj, tempj, pHj = 'fwat' + str(j), 'fair' + str(j),'temp' + str(j), 'pH' + str(j)
             rhopartj, fpartj, advj = 'rhopart' + str(j),'fpart' + str(j),'adv' + str(j)
             compartment = j
             if compartment not in ['topsoil', 'drain_pores', 'filter']:#These compartments are ignored
                 if compartment in ['rootbody', 'rootxylem', 'rootcyl']: #roots are discretized
                     mask= res.dm
-                    res.loc[mask,Aj] = timeseries.loc[(slice(None),compartment),'Area'].reindex(res.index,method = 'bfill')\
-                            /len(res.index.levels[1])-1    
                     if compartment in ['rootbody']:
                         res.loc[mask,Vj] = (params.val.VFrootbody+params.val.VFapoplast)*res.Vroot #Main body consists of apoplast and cytoplasm
                     else:
                         VFrj = 'VF' + str(j)
+                        #Calculated with the volume fraction
                         res.loc[mask,Vj] = params.loc[VFrj,'val']*res.Vroot
+                        #Area of roots - this is calculating the surface area of the roots as a fraction of the overall root area.
+                        #We can derive this using the lateral surface area of the roots (neglect tips) and the area & volume fractions
+                        # We know that V2/V1 = VF12, and we have V1/A1 = X from the params file. So, A2 = VF12^(-1/3)*A1/V1*V2
+                        if compartment in ['rootxylem']: #xylem surrounds the central cylinder so need to add the fractions and the volumes
+                            res.loc[mask,Aj] = (params.val.VFrootxylem+params.val.VFrootcyl)**(-1/3)*res.Aroot/res.Vroot\
+                            *(params.val.VFrootxylem+params.val.VFrootcyl)*res.Vroot
+                        else:
+                            res.loc[mask,Aj] = params.loc[VFrj,'val']**(-1/3)*res.Aroot/res.Vroot*res.loc[mask,Vj]
                     res.loc[mask,Vjind] = res.loc[mask,Vj] #Needed for the FugModel module
                 elif compartment in ['water','subsoil']: #water and subsoil
                     mask = res.dm
@@ -295,14 +309,19 @@ class BCBlues(SubsurfaceSinks):
                 res.loc[mask,advj] = timeseries.loc[(slice(None),compartment),'Q_out'].reindex(res.index,method = 'bfill')
                 if compartment == 'air': #Set air density based on temperature
                     res.loc[mask,rhoj] = 0.029 * 101325 / (params.val.R * res.loc[:,tempj])
+                    #res.loc[mask,advj] = np.sqrt(locsumm.loc['air','Area'])*locsumm.loc['air','Depth']
         #Now we are going to put the drain layer back as dm=True, it will be treated as a special case in the ADRE        
         #res.loc[(slice(None),numx[-1]+1),'dm'] = False       
         #For area of roots in contact with sub and topsoil assume that roots in both zones are roughly cylindrical
         #with the same radius. SA = pi r² 
         res.loc[res.dm,'Arootsubsoil'] = res.Aroot #Area of roots in direct contact with subsoil
+        #Vertical facing soil area
         res.loc[res.dm,'AsoilV'] = timeseries.loc[(slice(None),'subsoil'),'Area']\
         .reindex(res.index,method = 'bfill')
-        res.loc[res.maskts,'Asoilair'] = timeseries.loc[(slice(None),'topsoil'),'Area']\
+        #For bioretention, we want this interface in the top of the soil and in the non-discretized compartment (if present)
+        #pdb.set_trace()
+        mask = (res.x == min(res.x)) | (res.x == 999.)
+        res.loc[mask,'Asoilair'] = timeseries.loc[(slice(None),'topsoil'),'Area']\
         .reindex(res.index,method = 'bfill') #Only the "topsoil" portion of the soil interacts with the air
         #Shoot area based off of leaf area index (LAI) 
         if any(res.dm==False): #skip if no undiscretized compartments
@@ -327,8 +346,7 @@ class BCBlues(SubsurfaceSinks):
         
         This module includes particle mass balances, where particles are
         advective transfer media for compounds in the model.
-        Particle model based off of 
-        water flow modelling based on Randelovic et al (2016)
+        Water flow modelling based on Randelovic et al (2016)
         
         locsumm gives the conditions at t(n). 
         Inflow in m³/s, rainrate in mm/h, dt in s
@@ -337,7 +355,7 @@ class BCBlues(SubsurfaceSinks):
         """
         
         res = locsumm.copy(deep=True)
-        
+        #pdb.set_trace()
         #For first round, calculate volume
         if 'V' not in res.columns:
             res.loc[:,'V'] = res.Area * res.Depth #Volume m³
@@ -367,9 +385,9 @@ class BCBlues(SubsurfaceSinks):
         #Infiltration Kf is in m/hr
         #Potential
         Qinf_poss = params.val.Kf * (res.Depth.pond + res.Depth['filter'])\
-        /res.Depth['filter']*res.Area.pond
+        /res.Depth['filter']*res.Area['pond']
         #Upstream max flow (from volume)
-        Qinf_us = 1/dt * (res.V.pond+(Qr_in+inflow)*dt)
+        Qinf_us = 1/dt*(res.V.pond)+(Qr_in+inflow)
         #Downstream capacity
         #Maximum infiltration to native soils through filter and submerged zones, Kn is hydr. cond. of native soil
         Q_max_inf = params.val.Kn * (res.Area['filter'] + res.P['drain_pores']*params.val.Cs)
@@ -388,39 +406,50 @@ class BCBlues(SubsurfaceSinks):
         if res.Depth.pond > params.val.Hw:
             #Physically possible
             def pond_depth(pond_depth):
-                Q2_wp = params.val.Cq * params.val.Bw * np.sqrt(2.*9.81*(res.Depth.pond - params.val.Hw)**3.)
-                dVp = (inflow + Qr_in - Q26 - Q2_wp)*dt
-                res.loc['pond','V'] += dVp
-                old_depth = pond_depth
-                res.loc['pond','Depth'] = np.interp(res.V.pond,pondV,pondH, left = 0, right = pondH[-1])
-                minimizer = abs(old_depth - res.Depth.pond)
+                if pond_depth < params.val.Hw:
+                    minimizer = 999
+                else:
+                    Q2_wp = params.val.Cq * params.val.Bw * np.sqrt(2.*9.81*3600.**2.*(pond_depth - params.val.Hw)**3.)
+                    Q2_wus =  1/dt * ((pond_depth - params.val.Hw)*res.Area.pond) + (Qr_in+inflow) - Q26-Qover
+                    Q2_w = max(min(Q2_wp,Q2_wus),0)
+                    dVp = (inflow + Qr_in - Q26 - Q2_w-Qover)*dt
+                    oldV = res.loc['pond','V']
+                    testV = oldV + dVp
+                    oldD = pond_depth
+                    testD = np.interp(testV,pondV,pondH, left = 0, right = pondH[-1])
+                    minimizer = abs(oldD - testD)
                 return minimizer
-            res.loc['pond','Depth'] = optimize.newton(pond_depth,res.Depth.pond,tol=1e-3)
-            if res.Depth.pond < params.val.Hw:
+            try:
+                res.loc['pond','Depth'] = optimize.newton(pond_depth,res.Depth.pond,tol=1e-5)
+            except RuntimeError:#This indicates no solution converged, caused by draining to weir height 
                 res.loc['pond','Depth'] = params.val.Hw
-            Q2_wp = params.val.Cq * params.val.Bw * np.sqrt(2.*9.81*(res.Depth.pond - params.val.Hw)**3.)
+                
+            if res.Depth.pond < params.val.Hw:#
+                res.loc['pond','Depth'] = params.val.Hw
+            Q2_wp = params.val.Cq * params.val.Bw * np.sqrt(2.*9.81*3600.**2.*(res.Depth.pond - params.val.Hw)**3.)
             #Upstream Control
-            Q2_wus = 1/dt * (res.Depth.pond - params.val.Hw)*res.Area.pond + (Qr_in+inflow)*dt - Q26*dt
+            Q2_wus = 1/dt * ((res.Depth.pond - params.val.Hw)*res.Area.pond) + (Qr_in+inflow) - Q26-Qover
             Q2_w = max(min(Q2_wp,Q2_wus),0)
         else:
             Q2_w = 0
         #Exfiltration to surrounding soil from pond. Assume that infiltration happens preferentially as it
         #flows on the infiltrating part.
         #pdb.set_trace()
-        dVp_interim = (inflow + Qr_in - Q26 - Q2_w)*dt
-        pondV_interim = res.loc['pond','V'] + dVp_interim
-        pondA_interim = np.interp(pondV_interim,pondV,pondH, left = 0, right = pondH[-1]) 
+        #dVp_interim = (inflow + Qr_in - Q26 - Q2_w)*dt
+        #pondV_interim = res.loc['pond','V'] + dVp_interim
+        #pondA_interim = np.interp(pondV_interim,pondV,pondA, left = 0, right = pondA[-1]) 
         #Maximum possible
-        if  pondA_interim > res.Area['filter']: #If pond is over surrounding soil
-            Qpexf_poss = params.val.Kn*((pondA_interim-res.Area['filter']) + params.val.Cs*res.P['pond'])
-        else:
-            Qpexf_poss = 0 #If the pond is only over the filter it drains to the filter
+        #if  pondA_interim > res.Area['filter']: #If pond is over surrounding soil
+        #    Qpexf_poss = params.val.Kn*((pondA_interim-res.Area['filter']) + params.val.Cs*res.P['pond'])
+        #else:
+        Qpexf_poss = 0 #Always over the system, there would be no drainage out from the bottom of the pond
         #Upstream availability, no need for downstream as it flows out of the system
-        Qpexf_us = 1/dt*(res.V.pond) + (Qr_in+inflow-Q26-Q2_w)*dt
+        Qpexf_us = 1/dt*(res.V.pond) + (Qr_in+inflow-Q26-Q2_w)
         Q2_exf = max(min(Qpexf_poss,Qpexf_us),0) #Actual exfiltration
         #pond Volume from mass balance
-        #Change in pond volume dVp at t
-        dVp = (inflow + Qr_in - Q26 - Q2_w - Q2_exf)*dt
+        #Change in pond volume dVp at t 
+        dVp = (inflow + Qr_in - Q26 - Q2_w-Qover - Q2_exf)*dt
+        (inflow + Qr_in - Q26 - Q2_w- Qover)*dt
         if (res.loc['pond','V'] + dVp) < 0:
             #Correct, this will only ever be a very small error.
             dVp = -res.loc['pond','V']
@@ -442,7 +471,7 @@ class BCBlues(SubsurfaceSinks):
             #Upstream volume available (in drain layer)
             Q10_cus = (res.V.drain_pores)/dt
             #Space available in pore_filt
-            Q10_cds = 1/dt * ((1 - Sss)*(res.V['filter'] - Q26*dt))
+            Q10_cds = 1/dt * ((1 - Sss)*res.V['filter']) - Q26
             Q106 = max(min(Q10_cp,Q10_cus,Q10_cds),0)
         else: 
             Q106 = 0
@@ -450,10 +479,10 @@ class BCBlues(SubsurfaceSinks):
         S_est = min(1.0,Sss+Q26*dt/(res.V['filter']*res.Porosity['filter']))
         #Infiltration from filter to drainage layer
         Q6_infp = res.Area.subsoil*params.val.Kf*S_est*(res.Depth.pond + res.Depth['filter'])/res.Depth['filter']
-        if Sss < params.val.Sh: #No volume available in filter zone if at hygroscopic point
-            Q6_inf_us = (Q26+Q106)*dt
-        else:
-            Q6_inf_us = 1/dt*((Sss-params.val.Sh)*res.Porosity['filter']*res.V['filter']+(Q26+Q106)*dt)
+        if S_est < params.val.Sh: #No volume available in filter zone if estimated below hygroscopic point
+            Q6_inf_us = 0#(Q26+Q106)
+        else:#Here we use the saturation value at the last time step, not the actual one. This should keep at hygroscopic point.
+            Q6_inf_us = 1/dt*((Sss-params.val.Sh)*res.Porosity['filter']*res.V['filter'])+(Q26+Q106)
         Q610 = max(min(Q6_infp,Q6_inf_us),0)
         #Flow due to evapotranspiration. Some will go our the air, some will be transferred to the plants for cont. transfer?
         if S_est <= params.val.Sh:
@@ -467,7 +496,7 @@ class BCBlues(SubsurfaceSinks):
         else:
             Q6_etp = res.Area['filter']*params.val.Emax
         #Upstream available
-        Q6_etus = 1/dt* ((Sss-params.val.Sh)*res.V['filter']*res.Porosity['filter'] +(Q26+Q106-Q610)*dt)
+        Q6_etus = 1/dt* ((Sss-params.val.Sh)*res.V['filter']*res.Porosity['filter']) +(Q26+Q106-Q610)
         Q6_et = max(min(Q6_etp,Q6_etus),0)
         
         #topsoil and subsoil pore water - water
@@ -485,7 +514,7 @@ class BCBlues(SubsurfaceSinks):
         #Exfiltration from drain zone to native soil
         Q10_exfp = params.val.Kn * (res.Area.drain + params.val.Cs*\
                    res.P.drain*res.Depth.drain_pores/res.Depth.drain)
-        Q10_exfus = 1/dt * ((1-res.Porosity.drain)*(res.Depth.drain_pores-params.val.hpipe)*res.Area.drain + (Q610-Q106)*dt)
+        Q10_exfus = 1/dt*((1-res.Porosity.drain)*(res.Depth.drain_pores-params.val.hpipe)*res.Area.drain) + (Q610-Q106)
         Q10_exf = max(min(Q10_exfp,Q10_exfus),0)
         dVdest = (Q610 - Q106 - Q10_exf)*dt #Estimate the height for outflow - assuming free surface at top of bucket
         draindepth_est =  (res.loc['drain_pores','V'] + dVdest) /(res.Area.drain * (res.Porosity.drain))
@@ -529,7 +558,8 @@ class BCBlues(SubsurfaceSinks):
         res.loc['pond','Q_towater'] = Q26 #Infiltration to subsoil
         res.loc['pond','Q_out'] = Q2_w +Qover #Weir + overflow
         res.loc['pond','Q_exf'] = Q2_exf #exfiltration from pond
-        res.loc['pond','Q_in'] = inflow + Qr_in#From outside system
+        res.loc['pond','Q_in'] = inflow + Qr_in #From outside system
+        res.loc['pond','QET'] = rainrate/1E3 #Needed to calculate wet deposition, put here for ease of use.
         res.loc['water','Q_todrain'] = Q610 #Infiltration to drain layer
         res.loc['water','QET'] = Q6_et #Infiltration to drain layer
         res.loc['water','Q_exf'] = 0 #Assumed zero
@@ -541,8 +571,8 @@ class BCBlues(SubsurfaceSinks):
         res.loc['topsoil','FrnWat'] = Sss*res.Porosity['filter']
         res.loc['drain','FrnWat'] = res.V.drain_pores/res.V.drain
         #Calculate VFair for drain and subsoil zones based on saturation
-        res.loc['subsoil','Frnair'] = res.Porosity['filter'] - Sss
-        res.loc['topsoil','Frnair'] = res.Porosity['filter'] - Sss
+        res.loc['subsoil','Frnair'] = res.Porosity['filter'] - Sss*res.Porosity['filter']
+        res.loc['topsoil','Frnair'] = res.Porosity['filter'] - Sss*res.Porosity['filter']
         res.loc['drain','Frnair'] = res.Porosity.drain - res.FrnWat.drain/res.Porosity.drain
         res.loc[:,'P'] = 2 * (res.Area/res.Depth + res.Depth) #Perimeter, m ## Need to make into hydraulic perimeter##
         res.loc[np.isnan(res.loc[:,'P']),'P'] = 0 #If the compartment has no volume
@@ -574,18 +604,18 @@ class BCBlues(SubsurfaceSinks):
             #First, update params. Updates:
             #Qin, Qout, RainRate, WindSpeed, 
             #Next, update locsumm
-            rainrate = timeseries.RainRate[t] #m³/h
+            rainrate = timeseries.RainRate[t] #mm/h
             inflow = timeseries.Qin[t] #m³/h
-            params.val.fvalveopen = timeseries.fvalveopen[t]
+            params.loc['fvalveopen','val'] = timeseries.fvalveopen[t]
             #pdb.set_trace()
             #Hardcoding switch in Kf after tracer event. If Kn2 is in the params it will switch
-            if timeseries.time[t] == 387.5:
+            if timeseries.time[t] > 7.:
                 try:
                     params.loc['Kn','val'] = params.val.Kn2
                 except AttributeError:
                     pass
-            if t == 413:#Break at specific timing
-                pdb.set_trace()
+            if t == 341:#216:#Break at specific timing 216 = first inflow
+                #pdb.set_trace()
                 yomama = 'great'
             res = self.bc_dims(res,inflow,rainrate,dt,params)
             res_t[t] = res.copy(deep=True)
@@ -595,10 +625,51 @@ class BCBlues(SubsurfaceSinks):
                 Tj,pHj = 'T'+str(j),'pH'+str(j)
                 res_t[t].loc[j,'Temp'] = timeseries.loc[t,Tj] #compartment temperature
                 res_t[t].loc[j,'pH'] = timeseries.loc[t,pHj] #Compartment pH
-            #For now, assume that inflow only to the water compartm
-            
+            #For now, assume that inflow only to the water compartm     
     
         res_time = pd.concat(res_t)
-        
+        #The structure of this is set up such that V(t) = V(t-1)+sum(Qt). What this means in practice is that the flows
+        #are acting on the previous step's V. For the contaminant transport, we need to have the flows acting on the volumes
+        #in the same time step. To accomplish this, we will shift it up one and add zeros in the first timestep.
+        res_time.loc[:,'V'] = res_time.loc[:,'V'].groupby(level=1).shift(1)
+        #Initial condition was zero volume in all cells. 
+        res_time.loc[(min(res_time.index.levels[0]),slice(None)),'V'] = 0
+        #Now we will also calculate advection from the air compartment - side area of air control volume * windspeed*3600 (windspeed in m/s)
+        res_time.loc[(slice(None),'air'),'Q_out'] = np.array(np.sqrt(locsumm.Area.air)*timeseries.loc[:,'WindSpeed'])*\
+            res_time.loc[(slice(None),'air'),'Depth']*3600
         
         return res_time
+    def draintimes(self,timeseries,res_time):
+        """
+        Determine the draindage times - time between peak depth and zero depth (https://wiki.sustainabletechnologies.ca/wiki/Bioretention:_Sizing)     
+        
+        timeseries (df) needs to contain inflow in m³/h and the times
+        res_time is the output from the flow_time method.
+        The initial conditions must include height of water in pond and drain zones (h)
+        volume fractions of water in the filter zone
+        """
+        #Find the places where depth is zero. The time between these indices are our events. 
+        zerodepths = timeseries.iloc[np.where(res_time.loc[(slice(None),'pond'),'Depth'] == 0.)].time
+        zerodepths = zerodepths[zerodepths>0]
+        #zerotimeind = np.sum(timeseries.time<0)
+        #posflows = timeseries.iloc[np.where(timeseries.loc[:,'Qin']!=0)].time
+        #posflows = posflows[posflows>0]
+        draintimes = []
+        drainidx = []
+        #pdb.set_trace()
+        for ind,idx in enumerate(zerodepths.index):
+            #Skip first cell and any consecutive indices 
+            if (idx == zerodepths.index[0]) | (idx-1 in zerodepths.index):
+                pass
+            else:
+                lastzero = zerodepths.index[np.where(zerodepths == zerodepths.iloc[ind-1])[0][0]]
+                maxDind = lastzero+ np.where(res_time.loc[(slice(lastzero,idx),'pond'),'Depth']
+                == max(res_time.loc[(slice(lastzero,idx),'pond'),'Depth']))[0][0]
+                draintimes.append(zerodepths[idx] - timeseries.loc[maxDind,'time'])
+                drainidx.append(idx) 
+        
+        return draintimes, drainidx   
+            #lastzeroQ = timeseries.loc[max(posflows.loc[slice(0,idx-1)].index)+1,'time']
+            #testchamp = zerodepths[idx] - lastzeroQ
+            #if testchamp > champ:
+            #    champ = testchamp

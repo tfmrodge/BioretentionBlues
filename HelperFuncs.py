@@ -6,6 +6,8 @@ Created on Thu Jul 26 11:36:27 2018
 """
 import numpy as np
 import pandas as pd
+import math
+import pdb
 
 def ppLFER(L,S,A,B,V,l,s,a,b,v,c):
     """polyparameter linear free energy relationship (ppLFER) in the 1 equation form from Goss (2005)
@@ -78,3 +80,12 @@ def df_sliced_index(df):
         rows.append(row)
     return pd.DataFrame(data=rows, index=pd.MultiIndex.from_tuples(new_index))
 
+#Find nearest value, used to find the index of a specific time
+#Source: https://stackoverflow.com/questions/2566412/find-nearest-value-in-numpy-array
+def find_nearest(array,value):
+    #pdb.set_trace()
+    idx = np.searchsorted(array, value, side="left")
+    if idx > 0 and (idx == len(array) or math.fabs(value - array[idx-1]) < math.fabs(value - array[idx])):
+        return array[idx-1]
+    else:
+        return array[idx]

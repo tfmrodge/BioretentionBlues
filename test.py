@@ -5,6 +5,21 @@ Load data for the hydroponic plant/water model
 @author: Tim Rodgers
 """
 
+
+Dvals = input_calcs.loc[:,'Drwater':]
+for jind, j in enumerate(numc):
+    jind = jind+1
+    Drj, Dadvj, Dtj = 'Dr' + str(j),'Dadv' + str(j),'DT' + str(jind)
+    Dvals.loc[:,Dtj+'_test'] = Dvals.loc[:,[Drj,Dadvj]].groupby(level=[0,1,2]).sum()
+    for kind, k in enumerate(numc):
+        kind = kind+1
+        D_jk,D_kj ='D_'+str(jind)+str(kind),'D_'+str(kind)+str(jind)
+        Dvals.loc[:,Dtj+'_test'] += Dvals.loc[:,D_jk]
+
+
+
+
+
 import time
 import pandas as pd
 import numpy as np
