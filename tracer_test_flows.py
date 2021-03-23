@@ -17,17 +17,26 @@ import hydroeval #For the efficiency
 from hydroeval import kge #Kling-Gupta efficiency (Kling-Gupta et al., 2009)
 #plt.style.use("ggplot")
 #BC_2 Being used to test immobile fraction impact
-params = pd.read_excel('params_BC_5.xlsx',index_col = 0) 
+#params = pd.read_excel('params_BC_5.xlsx',index_col = 0)
+params = pd.read_excel('params_BC_synthetic.xlsx',index_col = 0)
+#Testing slow drainage - how would this change performance? 
+#params = pd.read_excel('params_BC_SlowDrain.xlsx',index_col = 0) 
 locsumm = pd.read_excel('Kortright_BC.xlsx',index_col = 0)
+#Assuming the entire bioretention cell area is utilized
+#locsumm = pd.read_excel('Kortright_FullBC.xlsx',index_col = 0)
 locsumm.iloc[:,slice(0,14)] = locsumm.astype('float') #Convert any ints to floats 
 #locsumm = pd.read_excel('Oro_Loma_1.xlsx',index_col = 0) 
-chemsumm = pd.read_excel('Kortright_CHEMSUMM.xlsx',index_col = 0)
-#chemsumm = pd.read_excel('OPECHEMSUMM.xlsx',index_col =0)
+#chemsumm = pd.read_excel('Kortright_CHEMSUMM.xlsx',index_col = 0)
+chemsumm = pd.read_excel('OPECHEMSUMM.xlsx',index_col =0)
 #emsumm = pd.read_excel('PROBLEMCHEMSUMM.xlsx',index_col = 0)
 #chemsumm = pd.read_excel('EHDPPCHEMSUMM.xlsx',index_col = 0)
 #timeseries = pd.read_excel('timeseries_tracertest_Kortright_valve.xlsx')
-#timeseries = pd.read_excel('timeseries_tracertest_Kortright_valve.xlsx')
-timeseries = pd.read_excel('timeseries_tracertestExtended_Kortright_valve.xlsx')
+#timeseries = pd.read_excel('timeseries_tracertest630Max_Kortright_AllChems.xlsx')
+#timeseries = pd.read_excel('timeseries_tracertest630Max_Test.xlsx')
+#timeseries = pd.read_excel('timeseries_tracertestExtended_Kortright_AllChems.xlsx')
+#timeseries = pd.read_excel('timeseries_tracertestExtended_Kortright_SlowDrain.xlsx')
+#***SYNTHETIC EVENT***
+timeseries = pd.read_excel('timeseries_synthetic.xlsx')
 #timeseries = pd.read_excel('timeseries_LatterEvent_Kortright.xlsx')
 #Truncate timeseries if you want to run fewer
 numc = np.array(np.concatenate([locsumm.index[0:2].values]),dtype = 'str')
@@ -81,10 +90,11 @@ comp1 = 'water'
 comp2 = 'drain'
 comp3 = 'pond'
 shiftdist = 12
-pltdata = res_time.loc[(slice(210,6356),comp2),:] #To plot 
+pltdata = res_time.loc[(slice(210,timeseries.index[-1]),comp2),:] #To plot 
+pltdata2 = res_time.loc[(slice(210,timeseries.index[-1]),comp3),:]
 #res_time.loc[(plttime,slice(None),slice(None)),slice(None)] #Just at plttime
 ylim = [0, 4]
-#xlim = [210, 6356]
+xlim = [0,48]
 ylabel = 'Concentration (μg/g dw)'
 xlabel = 'Time'
 #pltdata = res_time #All times at once
@@ -92,16 +102,21 @@ fig = plt.figure(figsize=(14,8))
 #fig = plt.figure(figsize=(14,8))
 #ax = sns.lineplot(x = pltdata.index.get_level_values(0),hue = pltdata.index.get_level_values(1),y=yvar,data = pltdata)
 ax = sns.lineplot(x = pltdata.loc[(slice(None),'drain'),'time'],hue = pltdata.index.get_level_values(1),y=yvar,data = pltdata)
-
-ax.set_ylim(ylim)#
+#ax2 = sns.lineplot(x = pltdata2.loc[(slice(None),'pond'),'time'],hue = pltdata2.index.get_level_values(1),y='Depth',data = pltdata2)
+#ax2.set_xlim(xlim)
+ax.set_ylim(ylim)#KGE
 #ax.set_xlim(xlim)
 ax.tick_params(axis='both', which='major', labelsize=15)
-
+#Calculate the draindown time - this isn't quite accurate as it should measure from the end of the influent.
+#timeseries.loc[630,'time'] is the last influent during the tracer test.
+draindownt = max(test.draintimes(timeseries,res_time)[0])
+        
+        
 #Finally, let's see how good this flow-routing has been
 timeseries.loc[:,'Q_drainout']= np.array(res_time.loc[(slice(None),'drain'),'Q_out'].shift(shiftdist))
 timeseries.loc[np.isnan(timeseries.Q_drainout),'Q_drainout'] = 0
 KGE = hydroeval.evaluator(kge, np.array(timeseries.loc[timeseries.time>0,'Q_drainout']),\
-                          np.array(timeseries.loc[timeseries.time>0,'Qout (measured)']))
-#outpath ='D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/Flow_time_tracertest_extended.pkl'
-outpath ='D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/Flow_time_tracertest_630max.pkl'
+                          np.array(timeseries.loc[timeseries.time>0,'Qout_meas']))
+outpath ='D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/Flow_time_tracertest_extended.pkl'
+#outpath ='D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/Flow_time_tracertest_630max.pkl'
 res_time.to_pickle(outpath)

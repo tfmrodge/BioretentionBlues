@@ -262,14 +262,15 @@ class FugModel(metaclass=ABCMeta):
         res = ic.copy(deep=True)
         chems = res.index.levels[0]
         numchems = len(chems)
-        numx = len(res[res.dm].index.levels[2]) #Number of discretized xs. THIS IS BROKEN
+        numx = int(res.dm.sum()/numchems) #Number of discretized xs. 
         #Set up masks for the discretized 0th and last cells
         res.loc[:,'dm0'] = False
         res.loc[:,'dmn'] = False
         res.loc[:,'dmd'] = False
         res.loc[(slice(None),slice(None),0),'dm0'] = True #0th discretized cell
         res.loc[(slice(None),slice(None),slice(numx-2,numx-2)),'dmn'] = True #Last discretized cell excluding drain
-        res.loc[(slice(None),slice(None),slice(numx-1,numx)),'dmd'] = True #Drainage cell
+        res.loc[(slice(None),slice(None),slice(numx-1,numx-1)),'dmd'] = True #Drainage cell
+        res.loc[:,'ndm'] = (res.dm==False) #Drainage cell
         #We are going to declare the drainage cell non-discretized for the purposes of the ADRE - advection only into it
         res.loc[res.dmd==True,'dm'] = False
         if 'dx' not in res.columns: #
@@ -401,7 +402,11 @@ class FugModel(metaclass=ABCMeta):
             f1 = interp1d(xx,yy,kind='linear',fill_value='extrapolate')#Linear interpolation where cubic fails
             #Determine mass at xf and xb
             res.loc[(ii,slice(None),res.dm),'M_xf'] = f(res.loc[(ii,slice(None),res.dm),'xf']) 
-            res.loc[(ii,slice(None),res.dm),'M_xb'] = f(res.loc[(ii,slice(None),res.dm),'xb']) 
+            #Check if the mass at the RHS of the cell is more than the mass in the cell, correct.
+            res.loc[res.M_xf>res.M_n,'M_xf'] = res.loc[res.M_xf>res.M_n,'M_n']
+            res.loc[(ii,slice(None),res.dm),'M_xb'] = res.loc[(ii,slice(None),res.dm),'M_xf'].shift(1)
+            res.loc[(ii,slice(None),res.dmd),'M_xb'] = np.nan
+            res.loc[(ii,slice(None),res.dm0),'M_xb'] = 0.
             res.loc[(ii,slice(None),res.dm),'M_star'] = f(res.loc[(ii,slice(None),res.dm),'xf'])\
             - f(res.loc[(ii,slice(None),res.dm),'xb'])
             
@@ -419,6 +424,7 @@ class FugModel(metaclass=ABCMeta):
                 res.loc[(ii,slice(None),res.dm),'M_star'] = f1(res.loc[(ii,slice(None),res.dm),'xf'])\
                 - f1(res.loc[(ii,slice(None),res.dm),'xb'])
                 res.loc[(ii,slice(None),res.dm),'M_xf'] = f1(res.loc[(ii,slice(None),res.dm),'xf']) #Mass at xf, used to determine advection out of the system
+        
         #US boundary conditions
         #Case 1 - both xb and xf are outside the domain. 
         #All mass (moles) comes in at the influent activity & Z value (set to the first cell)
@@ -426,10 +432,51 @@ class FugModel(metaclass=ABCMeta):
         mask = (res.xb == 0) & (res.xf == 0)
         M_us = 0
         res.loc[:,'inp_mass1'] = 0 #initialize
+        #If there is a ponding zone, we will split the particles out.
+        #pdb.set_trace()
+        if 'pond' in numc: 
+            ponda_t, inp_val = 'a' + str(numc.index('pond')+1) +"_t", 'inp_' +str(numc.index('pond')+1)
+            #The ponding zone is a single compartment, so gets the entire Min in one go.
+            #So we add apond_t and the incoming mass
+            pondastar = np.array(np.array(res.loc[res.ndm,ponda_t]*res.loc[res.ndm,'Zpond']*(res.Vpond[-1] + res.Qin[-1]*dt)\
+                                 +np.array(res.loc[(slice(None),slice(None),0),'Min']))\
+                        /res.loc[res.ndm,'Zpond']/np.array(res.Vpond[-1] + res.Qin[-1]*dt))
+            pondastar[np.isnan(pondastar)] = 0 #If there is no flow or pond volume this returns NaN so correct
+            Min = res.loc[(slice(None),slice(None),0),'Min']
+            res.loc[res.dm0,'Mqin'] = np.array(pondastar*dt*res.loc[res.ndm,'D_qps']) #Attached to particles
+            res.loc[res.dm0,'Min_p'] = np.array(pondastar*dt*res.loc[res.ndm,'D_infps'])#Water phase
+            #Then, we add the Mqin to the soil 
+            inp_soil = 'inp_' +str(numc.index('subsoil')+1)
+            res.loc[:,inp_soil] = 0
+            res.loc[res.dm0,inp_soil] = res.loc[res.dm0,'Mqin']/dt
+            #Next, we resolve this time step by making it part of the RHS for the pond cell.
+            if res.Vpond[-1] == 0: #There may be a small rounding error there, so we will fix it here.
+                #res.loc[res.ndm,inp_val] = 0 #Just add the rounding error to Min to keep it conservative
+                if Min.sum() != 0: #Just in case, only do this correction if there is actually and Min
+                    res.loc[res.dm0,'Min_p'] += np.array(pondastar*res.loc[res.ndm,'Zpond']*(res.Vpond[-1]+res.Qin[-1]*dt)\
+                                            -np.array(res.loc[res.dm0,'Mqin']+res.loc[res.dm0,'Min_p']))
+                else:
+                    res.loc[res.ndm,ponda_t] = 0 #All mass leaves pond advectively if the volume is zero.
+            else:#If there is a ponding zone, the extra mass will stay in the pond. Need to account for this
+                #res.loc[res.ndm,inp_val] = np.array(Min-res.loc[res.dm0,'Mqin']-res.loc[res.dm0,'Min_p'])/dt
+                res.loc[res.ndm,ponda_t] = (pondastar*res.loc[res.ndm,'Zpond']*np.array(res.Vpond[-1] + res.Qin[-1]*dt)\
+                                           - np.array(res.loc[res.dm0,'Mqin']+res.loc[res.dm0,'Min_p']))\
+                                           /res.loc[res.ndm,'Zpond']/np.array(res.Vpond[-1])
+                #Check for a very small rounding error, ignore if present.
+                err = (pondastar*res.loc[res.ndm,'Zpond']*np.array(res.Vpond[-1] + res.Qin[-1]*dt))\
+                    - np.array(res.loc[res.dm0,'Mqin']+res.loc[res.dm0,'Min_p']) \
+                    - (res.loc[res.ndm,ponda_t]*res.loc[res.ndm,'Zpond']*np.array(res.Vpond[-1]))
+                relerr = err/(pondastar*res.loc[res.ndm,'Zpond']*np.array(res.Vpond[-1] + res.Qin[-1]*dt))
+                if (np.sum(res.loc[res.ndm,ponda_t]<0)>0) & (np.sum(relerr<1/1000000)!=0):
+                    res.loc[res.ndm,ponda_t] = 0
+        else:#Otherwise initialize these.
+            res.loc[:,'Mqin'] = 0
+            res.loc[:,'Min_p'] = res.loc[:,'Min']
+
         if sum(mask) != 0:
             #res[mask].groupby(level = 0)['del_0'].sum()
             if params.val.Pulse == True:
-                M_in = res.Min[mask]/(res.Qin[mask])*res.del_0[mask] #Mass from pulse in cells
+                M_in = res.Min_p[mask]/(res.Qin[mask])*res.del_0[mask] #Mass from pulse in cells
                 M_in[np.isnan(M_in)] = 0 #If Qin is zero
                 res.loc[mask,'M_star'] = M_in
             else:
@@ -448,7 +495,7 @@ class FugModel(metaclass=ABCMeta):
             #c1 BCs and this case, which will only ever have one cell as long as Xf(i-1) = xb(i)
             if params.val.Pulse == True:
                 try:
-                    M_t = res.Min[mask] - np.array(M_us) #Any remaining mass goes in this cell
+                    M_t = res.Min_p[mask] - np.array(M_us) #Any remaining mass goes in this cell
                     M_t[np.isnan(M_t)] = 0 #If Qin is zero
                 except ValueError:
                     M_t = 0
@@ -464,20 +511,17 @@ class FugModel(metaclass=ABCMeta):
         mask = (np.isnan(res.M_star)) & (~np.isnan(res.Pe)) #Peclet check excludes drain cell
         if sum(mask) !=0:
             res.loc[mask,'M_star'] = slope.reindex(res.loc[mask,'M_star'].index,method = 'ffill') * (res.xf[mask] - res.xb[mask])
-        #Define advective flow for the drainage cell. We are going to make flux in happen explicitly, but mass flux out will be implicit
-        #to prevent negative mass.
-        #OPTIONS - have advection handled implicitly or have it explicit.
-        #When we have explicit - mass out >> mass in. BAD
+        #Define advective flow for the drainage cell
         #pdb.set_trace()
         res.loc[res.dmd,'M_star']  = res.loc[res.dmd,'M_i'] \
         +np.array(res.loc[res.dmn,'M_n'] - res.loc[res.dmn,'M_xf'])\
-        - np.array(dt*(res.loc[res.dmd,'a1_t']*res.loc[res.dmd,'Z1']*res.loc[res.dmd,'Qout']))
+        - np.array(dt*(res.loc[res.dmd,'a1_t']*res.loc[res.dmd,'Z1']*res.loc[res.dmd,'Qout']))#This line is advective mass out. -explicit.
         #res.loc[:,'M_star'].sum()/(res.loc[:,'M_i'].sum()-np.array(dt*(res.loc[res.dmd,'a1_t']*res.loc[res.dmd,'Z1']*res.loc[res.dmd,'Qout']))) #Code to check if the mass from the advection step balances
         #- np.array(dt*(res.loc[res.dmd,'a1_t']*res.loc[res.dmd,'D_waterexf']))
         #Divide out to get back to activity/fugacity from advection
         res.loc[:,'a_star'] = res.M_star / res.Z1 / res.V1
-        #Error checking, does the advection part work?
-        
+        #checkmass =  res.loc[:,'M_i'].sum() - res.loc[:,'M_star'].sum() - np.array(dt*(res.loc[res.dmd,'a1_t']*res.loc[res.dmd,'Z1']*res.loc[res.dmd,'Qout']))
+        #Error checking, does the advection part work? Advection only. ALSO CHANGE M_star to include exfiltration from final cell.
         '''
         res.loc[:,'a1_t1'] = res.a_star 
         res.loc[:,'a2_t1'] = 0
@@ -506,76 +550,141 @@ class FugModel(metaclass=ABCMeta):
         #Middle (m) term acting on x(i) - this will be subracted in the matrix (-m*ai)
         #Upstream and downstream BCs have been dealt with in the b and f terms
         res.loc[:,'m'] = res.f+res.b+dt*res.DT1+res.V1*res.Z1
-        #For the drainage zone, m includes advective flow out the pipe - calculated implicitly to make conservative.
+        #For the drainage zone
         res.loc[res.dmd,'m'] = dt*res.DT1+res.V1*res.Z1#+dt*(res.loc[res.dmd,'Z1']*res.loc[res.dmd,'Qout'])
         #res.loc[res.dmd,'m'] = 0 #Turn off drainage other processes
+        #Now we are going to set res.dm back to including the drainage cell.
+        res.loc[:,'dm'] = res.ndm == False
         #These will make the matrix. For each spatial step, i, there will be
         #numc activities that we will track. So, in a system of water, air and sediment
         #you would have aw1, as1, aa1, aw2,as2,aa3...awnumc,asnumc,aanumc, leading to a matrix
         #of numc * i x numc * i in dimension. Then we stack these on the first axis
         #so that our matrix is numchem x numx*numc * numx*numc
         #Initialize transport matrix and RHS vector (inp)
-        mat = np.zeros([numchems,numx*len(numc),numx*len(numc)])
-        inp = np.zeros([numchems,numx*len(numc)])
+        #pdb.set_trace()
+        numcells = len(res.x) #This includes the non-discretized cell
+        numc_disc = 5 #Number of non-discretized cells
+        numc_bulk = len(numc) - numc_disc
+        mat = np.zeros([numchems,numx*numc_disc+numc_bulk,numx*numc_disc+numc_bulk])
+        inp = np.zeros([numchems,numx*numc_disc+numc_bulk])
         #FILL THE MATRICES
         #First, define where the matrix values will go.
-        m_vals = np.arange(0,(numx)*len(numc),len(numc))
-        b_vals = np.arange(len(numc),numx*len(numc),len(numc))
+        m_vals = np.arange(0,(numx)*numc_disc,numc_disc)
+        b_vals = np.arange(numc_disc,numx*numc_disc,numc_disc)
         #Then, we can set the ADRE terms. Since there will always be three no need for a loop.
-        mat[:,m_vals,m_vals] = -np.array(res.m).reshape(numchems,numx)
-        mat[:,b_vals,m_vals[0:numx-1]] = np.array(res.loc[(slice(None),slice(None),slice(1,numx)),'b']).reshape(numchems,numx-1)
-        mat[:,m_vals[0:numx-1],b_vals] = np.array(res.loc[(slice(None),slice(None),slice(0,numx-2)),'f']).reshape(numchems,numx-1)
+        mat[:,m_vals,m_vals] = -np.array(res[res.dm].m).reshape(numchems,numx)
+        mat[:,b_vals,m_vals[0:numx-1]] = np.array(res[res.dm].loc[(slice(None),slice(None),slice(1,numx)),'b']).reshape(numchems,numx-1)
+        mat[:,m_vals[0:numx-1],b_vals] = np.array(res[res.dm].loc[(slice(None),slice(None),slice(0,numx-2)),'f']).reshape(numchems,numx-1)
         #mat[:,m_vals[numx-1],b_vals]
-        #Next, set D values and inp values. In the loop as numc might change
+        #Next, set D values and inp values for the discretized cells. Sadly gotta loop it.
         j,k = [0,0]
-        for j in range(0,len(numc)): #j is the row index
+        for j in range(0,numc_disc): #j is the row index
             inp_val = 'inp_' +str(j+1)
             if inp_val not in res.columns: #If no inputs given assume zero
                 res.loc[:,inp_val] = 0
+            #elif ('pond' in numc) & (j == numc.index('subsoil')):
+                #Place the particulate influent in the uppermost soil cell.
+                #inp[:,j]  = np.array(-res[res.dm0].Mqin)            
             if j == 0: #Water compartment is M* and any external inputs
-                inp[:,m_vals] = np.array(-res.M_star).reshape(numchems,numx) - dt * np.array(res.loc[:,'inp_1']).reshape(numchems,numx)
-                res.loc[:,'inp_mass1'] += - dt * np.array(res.loc[:,'inp_1']) #Mass from inputs to water compartment
+                inp[:,m_vals] = np.array(-res[res.dm].M_star).reshape(numchems,numx) - dt * np.array(res.loc[res.dm,'inp_1']).reshape(numchems,numx)
+                #res.loc[:,'inp_mass1'] += - dt * np.array(res.loc[:,'inp_1']) #Mass from inputs to water compartment
             else: #For the other compartments the input is the source term less the value at time n
                 a_val, V_val, Z_val = 'a'+str(j+1) + '_t', 'V' + str(j+1), 'Z' + str(j+1)
                 #RHS of the equation is the source plus the mass at time n for compartment j
-                inp[:,m_vals+j] += - dt * np.array(res.loc[:,inp_val]).reshape(numchems,numx)\
-                - np.array(res.loc[:,a_val]).reshape(numchems,numx)\
-                *np.array(res.loc[:,Z_val]).reshape(numchems,numx)\
-                *np.array(res.loc[:,V_val]).reshape(numchems,numx)
+                inp[:,m_vals+j] += - dt * np.array(res.loc[res.dm,inp_val]).reshape(numchems,numx)\
+                - np.array(res.loc[res.dm,a_val]).reshape(numchems,numx)\
+                *np.array(res.loc[res.dm,Z_val]).reshape(numchems,numx)\
+                *np.array(res.loc[res.dm,V_val]).reshape(numchems,numx)
             for k in range(0,len(numc)): #k is the column index
                 if (j == k): 
                     if j == 0:#Skip DT1 as it is in the m value
-                        pass
+                        pass            
                     else: #Otherwise, place the DT values in the matrix
                         D_val, D_valm, V_val, Z_val = 'DT' + str(k+1),'DTm' + str(k+1), 'V' + str(k+1), 'Z' + str(k+1)
                         #Modify DT to reflect the differential equation
-                        if np.any(res.loc[:,D_val]< 0):
+                        if np.any(res.loc[res.dm,D_val]< 0):
                             pass
+                        #For the root cylinder, we need to pass the evapotranspiration up the roots.
+                        elif numc[j] in ['rootcyl']:
+                            #pdb.set_trace()
+                            #pass
+                            mat[:,m_vals[0:numx-1]+j,b_vals+j] = dt * np.array(res.loc[res.dm,'D_csh'].shift(-1)).reshape(numchems,numx)[:,slice(0,numx-1)]
                         res.loc[:,D_valm] = dt*res.loc[:,D_val] + res.loc[:,V_val]*res.loc[:,Z_val]
-                        mat[:,m_vals+j,m_vals+j] = -np.array(res.loc[:,D_valm]).reshape(numchems,numx)
-                else: #Place the intercompartmental D values
+                        #Diagonal cannot be zero to solve the equation, set to -1. Since the a value here will always be 0 this shouldn't be a problem.
+                        res.loc[res.loc[:,D_valm]==0,D_valm] = 1
+                        mat[:,m_vals+j,m_vals+j] = -np.array(res.loc[res.dm,D_valm]).reshape(numchems,numx)
+                elif k < numc_disc: #Place the intercompartmental D values for the discretized cells
                     D_val = 'D_' +str(k+1)+str(j+1)
-                    if np.any(res.loc[:,D_val]< 0):
+                    if np.any(res.loc[res.dm,D_val]< 0): 
                         pass
-                    mat[:,m_vals+j,m_vals+k] = dt * np.array(res.loc[:,D_val]).reshape(numchems,numx)
+                    mat[:,m_vals+j,m_vals+k] = dt * np.array(res.loc[res.dm,D_val]).reshape(numchems,numx)
+                else: #Mass transfer from non-discretized cells is only through the top cell (for BCs at least may need to fix later)
+                    D_val = 'D_' +str(k+1)+str(j+1)
+                    if np.any(res.loc[res.dm,D_val]< 0):
+                        pass
+                    #Only in top finite volume. Transport from discretized to non-discretized cells
+                    mat[:,j,(numx)*numc_disc+k-numc_disc] = dt * np.array(res.loc[res.ndm,D_val]).reshape(numchems)
+                    
         #Upstream boundary - need to add the diffusion term. DS boundary is dealt with already
-        if params.val.Pulse == False: #Not worrying about this for mass pulse,it isn't diffusing upstream out of the system
+        if params.val.Pulse == False: #no flux US boundary for mass pulse, 
             inp[:,0] += -res.loc[(slice(None),slice(None),res.dm0),'b']*(res.loc[(slice(None),slice(None),res.dm0),'bc_us'] - res.loc[(slice(None),slice(None),res.dm0),'a_star'])#Activity gradient is ~bc_us - a_star
             res.loc[(slice(None),slice(None),res.dm0),'inp_mass1']  += np.array(res.loc[(slice(None),slice(None),res.dm0),'b']*(res.loc[(slice(None),slice(None),res.dm0),'bc_us'] - res.loc[(slice(None),slice(None),res.dm0),'a_star'])) #Mass added from diffusion
         #else:
-            
+        #Now, we will to do the undiscretized compartments. Probably could do in the above loop but this makes things a little more clearly separated
+        for j in range(j+1,len(numc)):
+            inp_val = 'inp_' +str(j+1)
+            if inp_val not in res.columns: #If no inputs given assume zero
+                res.loc[:,inp_val] = 0  
+            #Input is the source term less the value at time n
+            a_val, V_val, Z_val = 'a'+str(j+1) + '_t', 'V' + str(j+1), 'Z' + str(j+1)
+            #RHS of the equation is the source plus the mass at time n for compartment j
+            inp[:,numx*numc_disc+j-numc_disc] += - dt * np.array(res.loc[res.ndm,inp_val])\
+                - np.array(res.loc[res.ndm,a_val])\
+                *np.array(res.loc[res.ndm,Z_val])\
+                *np.array(res.loc[res.ndm,V_val])
+            for k in range(0,len(numc)): #k is the column index
+                if (j == k):
+                    D_val, D_valm, V_val, Z_val = 'DT' + str(k+1),'DTm' + str(k+1), 'V' + str(k+1), 'Z' + str(k+1)
+                    #Modify DT to reflect the differential equation
+                    res.loc[res.ndm,D_valm] = dt*res.loc[:,D_val] + res.loc[:,V_val]*res.loc[:,Z_val]
+                    #Diagonal cannot be zero to solve the equation, set to 1. Since the a value here will always be 0 this shouldn't be a problem.
+                    res.loc[res.loc[:,D_valm]==0,D_valm] = 1
+                    mat[:,numx*numc_disc+j-numc_disc,numx*numc_disc+j-numc_disc] = -np.array(res.loc[res.ndm,D_valm]).reshape(numchems)   
+                elif k < numc_disc: #Place the intercompartmental D values for the discretized cells in the leftmost column
+                    D_val = 'D_' +str(k+1)+str(j+1)
+                    if np.any(res.loc[res.dm,D_val]< 0):
+                        pass
+                    mat[:,(numx)*numc_disc+j-numc_disc,k] = dt * np.array(res.loc[res.dm0,D_val]).reshape(numchems)
+                else: #Mass transfer from non-discretized cells 
+                    D_val = 'D_' +str(k+1)+str(j+1)
+                    if np.any(res.loc[res.dm,D_val]< 0):
+                        pass
+                    #Transport between non-discretized cells
+                    mat[:,(numx)*numc_disc+j-numc_disc,(numx)*numc_disc+k-numc_disc] = dt * np.array(res.loc[res.ndm,D_val]).reshape(numchems)
+                    
+                
+                
         #Now, we will solve the matrix for each compound simultaneously (each D-matrix and input is stacked by compound)
         matsol = np.linalg.solve(mat,inp)
         #Error checking - Check solutions ~ inputs
         #np.dot(mat[0],matsol[0]) - inp[0]
         #Loop through the compartments and put the output values into our output res dataframe
-        #
+        #numx*numc_disc+numc_bulk
         for j in range(len(numc)):
             a_val, M_val, inp_mass = 'a'+str(j+1) + '_t1','M'+str(j+1) + '_t1','inp_mass'+str(j+1)
             V_val, Z_val =  'V' + str(j+1), 'Z' + str(j+1)
-            res.loc[(slice(None),slice(None),slice(None)),a_val] = matsol.reshape(numx*numchems,len(numc))[:,j]
+            #For discretized cells
+            if j < numc_disc:
+                res.loc[res.dm,a_val] = matsol[:,:numx*numc_disc].reshape(numx*numchems,numc_disc)[:,j]
+            else:
+                res.loc[res.ndm,a_val] = matsol[:,(numx)*numc_disc+j-numc_disc].reshape(numchems)
+            #Remove nans so that things don't get weird.
+            res.loc[np.isnan(res.loc[:,a_val]),a_val] = 0
+            #Mass can be calculated directly
             res.loc[(slice(None),slice(None),slice(None)),M_val] = res.loc[(slice(None),slice(None),slice(None)),a_val]\
-            *res.loc[(slice(None),slice(None),slice(None)),V_val]*res.loc[(slice(None),slice(None),slice(None)),Z_val] 
+                *res.loc[(slice(None),slice(None),slice(None)),V_val]*res.loc[(slice(None),slice(None),slice(None)),Z_val] 
+            #Remove nans so that things don't get weird.
+            res.loc[np.isnan(res.loc[:,M_val]),M_val] = 0
             if j != 0:#Skip water compartment
                 #pdb.set_trace
                 res.loc[(slice(None),slice(None),slice(None)),inp_mass] = dt*res.loc[:,inp_val]

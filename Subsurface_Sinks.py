@@ -5,10 +5,12 @@ Created on Mon Oct 15 15:52:42 2018
 @author: Tim Rodgers
 """
 from FugModel import FugModel #Import the parent FugModel class
-from HelperFuncs import ppLFER, vant_conv, arr_conv, make_ppLFER #Import helper functions
+from HelperFuncs import ppLFER, vant_conv, arr_conv, make_ppLFER, find_nearest #Import helper functions
 import numpy as np
 import pandas as pd
 from scipy.interpolate import interp1d
+import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
 #import time
 import pdb #Turn on for error checking
 
@@ -85,6 +87,8 @@ class SubsurfaceSinks(FugModel):
         res.loc[:,'LogKocA'] = np.log10(10.0**res.LogKocW / 10.0**res.LogKaw)
         #Calculate Henry's law constant (H, Pa m³/mol) at 298.15K
         res.loc[:,'H'] = 10.**res.LogKaw * R * 298.15
+        #Define Kocw from either an input value or from Kow
+        
  
         return res
     
@@ -124,11 +128,13 @@ class SubsurfaceSinks(FugModel):
         res.loc[:,'dUaw'] = res['dummy'].mul(chemsumm.dUaw,level = 0)
         #Equilibrium constants  - call by compartment name
         #Calculate temperature-corrected media reaction rates (/h)
-        #These are all set so that they can vary in x, even though for now they do not
+        #These can vary in x, although this makes the dataframe larger. 
+        #pdb.set_trace()
         for j in numc:
             Kdj, Kdij, focj, tempj = 'Kd' +str(j),'Kdi' +str(j),'foc' +str(j),'temp' +str(j)
             Kawj, rrxnj = 'Kaw' +str(j),'rrxn' +str(j)
             #Kaw is only neutral
+            
             res.loc[:,Kawj] = vant_conv(res.dUaw,res.loc[:,tempj],res['dummy'].mul(10.**chemsumm.LogKaw,level = 0))
             #Kd neutral and ionic
             if j in ['water','subsoil','topsoil','pond','drain']: #for water, subsoil and topsoil if not directly input
@@ -176,9 +182,13 @@ class SubsurfaceSinks(FugModel):
                     kspimin = (10e-10)*3600
                     res.loc[res.kspi<kspimin,'kspi'] = kspimin
                     #Air side MTC for veg (from Diamond 2001)
-                    delta_blv = 0.004 * ((0.07 / params.val.WindSpeed) ** 0.5) #leaf boundary layer depth, windsped in m/s
+                    #Back calculate windspeed in m/s. As the delta_blv requires a windspeed to be calculated, then replace with minwindspeed
+                    windspeed = res.loc[:,'advair']/np.array(np.sqrt(locsumm.Area.air)*locsumm.Depth.air*3600)
+                    windspeed.loc[windspeed==0] = params.val.MinWindSpeed #This will also replace all other compartments
+                    res.loc[:,'delta_blv'] = 0.004 * ((0.07 / windspeed.reindex(res.index,method = 'bfill')) ** 0.5) 
+                    #delta_blv = 0.004 * ((0.07 / params.val.WindSpeed) ** 0.5) #leaf boundary layer depth, windsped in m/s
                     res.loc[:,'AirDiffCoeff'] = res['dummy'].mul(chemsumm.AirDiffCoeff, level = 0)
-                    res.loc[:,'kav'] = res.AirDiffCoeff/delta_blv #m/h
+                    res.loc[:,'kav'] = res.AirDiffCoeff/res.delta_blv #m/h
                     #Veg side (veg-air) MTC from Trapp (2007). Consists of stomata and cuticles in parallel
                     #Stomata - First need to calculate saturation concentration of water
                     C_h2o = (610.7*10.**(7.5*(res.tempshoots-273.15)/(res.tempshoots-36.15)))/(461.9*res.tempshoots)
@@ -190,7 +200,7 @@ class SubsurfaceSinks(FugModel):
                     res.loc[:,'kcuta'] = 1/(1/res.kcut + 1*res['dummy'].mul((10.**chemsumm.LogKaw), level = 0)/(res.kav)) #m/h
                     res.loc[:,'kvv'] = res.kcuta+res.kst #m/h
             elif j in ['air']:
-                res.loc[maskn,Kdj] = vant_conv(res.dUslw,res.loc[:,tempj],res.loc[:,focj].mul(10.**chemsumm.LogKslW, level = 0))
+                res.loc[maskn,Kdj] = vant_conv(res.dUoa,res.loc[:,tempj],res.loc[:,focj].mul(10.**chemsumm.LogKqa, level = 0))
                 res.loc[maski,Kdij] = res.loc[maski,Kdj]
                 res.loc[:,rrxnj] = res['dummy'].mul(chemsumm.AirOHRateConst, level = 0)  * params.val.OHConc
                 res.loc[:,rrxnj] = arr_conv(params.val.EaAir,res.loc[:,tempj],res.loc[:,rrxnj])
@@ -217,6 +227,7 @@ class SubsurfaceSinks(FugModel):
             res.loc[res.dm==False,'Deff_pond'] = res['dummy'].mul(chemsumm.WatDiffCoeff, level = 0)
             res.loc[res.dm,'Bea_subsoil'] = res['dummy'].mul(chemsumm.AirDiffCoeff, level = 0)*\
             res.fairsubsoil**(10/3)/(res.fairsubsoil +res.fwatsubsoil)**2 #Effective air diffusion coefficient
+            res.loc[res.dm==False,'D_air'] = res['dummy'].mul(chemsumm.AirDiffCoeff, level = 0)
         if 'topsoil' in numc:
             res.loc[res.dm,'Deff_topsoil'] = res['dummy'].mul(chemsumm.WatDiffCoeff, level = 0)*\
                 res.fwattopsoil**(10/3)/(res.fairtopsoil +res.fwattopsoil)**2 #Effective water diffusion coefficient 
@@ -261,7 +272,8 @@ class SubsurfaceSinks(FugModel):
         else:
             res.loc[:,'pKb'] = np.nan
         res.loc[:,'chemcharge'] = res['dummy'].mul(chemsumm.chemcharge, level = 0) #0 = neutral, -1 acid first, 1 - base first
-        for j in numc: #Loop through compartments
+        for jind, j in enumerate(numc): #Loop through compartments
+            jind = jind+1 #The compartment number, for overall & intercompartmental D values
             dissi_j, dissn_j, pHj, Zwi_j = 'dissi_' + str(j),'dissn_' + str(j),\
             'pH' + str(j),'Zwi_' + str(j)
             gammi_j, gammn_j, Ij, Zwn_j = 'gammi_' + str(j),'gammn_' + str(j),\
@@ -296,9 +308,8 @@ class SubsurfaceSinks(FugModel):
             #pdb.set_trace()
             res.loc[:,Zqi_j] =  res.loc[:,Kdij] * res.loc[:,rhopartj]/1000 * res.loc[:,Zwi_j]
             res.loc[:,Zqn_j] =  res.loc[:,Kdj] * res.loc[:,rhopartj]/1000 * res.loc[:,Zwn_j]
-            jind = np.where(numc==j)[0]+1 #The compartment number, for overall & intercompartmental D values
             Zij, Znj, Zwj, Zqj,Zjind,Zj ='Zi_'+str(j),'Zn_'+str(j),'Zw_'+str(j),\
-            'Zq_'+str(j),'Z'+str(jind[0]),'Z'+str(j)
+            'Zq_'+str(j),'Z'+str(jind),'Z'+str(j)
             fpartj,fwatj,fairj,Kawj='fpart'+str(j),'fwat'+ str(j),'fair'+ str(j),'Kaw'+ str(j)
             #Set the mask for whether the compartment is discretized or not.
             if locsumm.loc[j,'Discrete'] == 1:
@@ -335,6 +346,7 @@ class SubsurfaceSinks(FugModel):
             if j in ['air','water','pond','drain']: #=Calculate the particle-bound fraction in air and water
                 phij = 'phi'+str(j)
                 res.loc[mask,phij] = res.loc[mask,fpartj]*(res.loc[mask,Zqi_j] + res.loc[mask,Zqn_j])/res.loc[mask,Zj]
+                
 
                 
         """        
@@ -415,11 +427,12 @@ class SubsurfaceSinks(FugModel):
         
         #D values (m³/h), N (mol/h) = a*D (activity based)
         #Loop through compartments to set D values
-        for j in numc: #Loop through compartments
-            jind = np.where(numc==j)[0]+1 #The compartment number, for overall & intercompartmental D values
+        #pdb.set_trace()
+        for jind, j in enumerate(numc): #Loop through compartments
+            jind = jind+1 #The compartment number, for overall & intercompartmental D values
             Drj, Dadvj, Zj, rrxnj, Vj= 'Dr' + str(j),'Dadv' + str(j),'Z' + \
-            str(jind[0]),'rrxn' + str(j),'V' + str(j)
-            advj, Dtj = 'adv' + str(j),'DT' + str(jind[0])
+            str(jind),'rrxn' + str(j),'V' + str(j)
+            advj, Dtj = 'adv' + str(j),'DT' + str(jind)
             if locsumm.loc[j,'Discrete'] == 1:
                 mask = res.dm
             else: 
@@ -433,18 +446,25 @@ class SubsurfaceSinks(FugModel):
             res.loc[mask,Drj] = res.loc[mask,Zj] * res.loc[mask,Vj] * res.loc[mask,rrxnj] 
             res.loc[mask,Dadvj] = res.loc[mask,Zj] * res.loc[mask,Vj] * res.loc[mask,advj]
             res.loc[mask,Dtj] = res.loc[mask,Drj] + res.loc[mask,Dadvj] #Initialize total D value
-            if j in ['water']: #interacts with subsoil and topsoil.
-                for k in numc: #Inner loop for inter-compartmental values
-                    kind = np.where(numc==k)[0]+1 #The compartment number, for overall & intercompartmental D values
-                    D_jk,D_kj = 'D_'+str(jind[0])+str(kind[0]),'D_'+str(kind[0])+str(jind[0])
+            #Now we will go through compartments. Since this is a model of transport in water, we assume there is always 
+            #a water compartment and that the water compartment is always first. This "water" is the mobile subsurface water.
+            if j in ['water']: #interacts with subsoil and topsoil and pond (if present)
+                for kind, k in enumerate(numc): #Inner loop for inter-compartmental values
+                    kind = kind+1 #The compartment number, for overall & intercompartmental D values
+                    D_jk,D_kj = 'D_'+str(jind)+str(kind),'D_'+str(kind)+str(jind)
                     try: #First, check if intercompartmental transport between jk already done
                         res.loc[:,D_jk]
                     except KeyError:
-                        if k in ['subsoil','topsoil']:
-                            if k == 'subsoil':
+                        if k == j: #Processes that come directly out of the compartment go here
+                            Zwk = 'Zw_'+str(k)
+                            #Water exfiltration
+                            res.loc[mask,'D_waterexf'] = res.loc[mask,'Qwaterexf']*res.loc[mask,'Zw_water']
+                            res.loc[mask,D_jk] = res.loc[:,'D_waterexf']                        
+                        elif k in ['subsoil','topsoil']:
+                            if k in ['subsoil']:
                                 y = Ymob_immob
                                 A = res.Asubsoil
-                            elif k == 'topsoil':
+                            elif k in ['topsoil']:
                                 y = Y_topsoil
                                 A = res.AsoilV
                             D_djk,D_mjk,Detjk,Zwk,Zk,Qetk = 'D_d'+str(j)+str(k),'D_m'+str(j)+str(k),'Det'+str(j)+str(k),\
@@ -453,7 +473,7 @@ class SubsurfaceSinks(FugModel):
                             #pdb.set_trace() #Testing for diffusion and Kow
                             #res.loc[mask,D_djk] = 1/(1/(params.val.kxw*A*res.Zwater)+y/(A*res.Deff_water*res.loc[mask,Zk]/res.loc[mask,Zwk]*res.Zw))
                             #res.loc[mask,D_djk] = 1/(1/(params.val.kxw*A*res.Zwater)+y/(A*res.Deff_subsoil*res.loc[mask,Zwk])) #Diffusion from water to soil
-                            #Calculate D waster subsoil from Paraiba (2002)
+                            #Calculate D water subsoil from Paraiba (2002)
                             Lw = res.Zwater*res.Deff_water/y
                             Lss = res.loc[mask,Zk]*res.Deff_subsoil/y
                             #Lss = res.loc[mask,Zk]*res.Deff_water/y
@@ -462,19 +482,27 @@ class SubsurfaceSinks(FugModel):
                             res.loc[mask,Detjk] = res.loc[mask,Qetk]*res.loc[mask,Zwk] #ET flow goes through subsoil first - may need to change
                             res.loc[mask,D_jk] = res.loc[mask,D_djk] + res.loc[mask,Detjk] + res.loc[mask,D_mjk]
                             res.loc[mask,D_kj] = res.loc[mask,D_djk]+ res.loc[mask,D_mjk]
-                        elif k == j: #Processes that come directly out of the compartment go here
+                        #If there is a ponding zone, then the activity at the upstream boundary condition is the activity in the pond.
+                        #We will have to make this explicit at the beginning of the ADRE
+                        elif k in ['pond']:
                             Zwk = 'Zw_'+str(k)
-                            res.loc[mask,'D_waterexf'] = res.loc[mask,'Qwaterexf']*res.loc[mask,'Zw_water']
-                            res.loc[mask,D_jk] = res.loc[:,'D_waterexf']
-                        else: #Other compartments Djk = Dkj = 0
+                            #Flow from pond to first cell. This assumes that all particles are captured in the soil, for now.
+                            res.loc[res.dm==False,'D_infps'] = np.array(res.loc[(slice(None),slice(None),0),'Qin'])\
+                                *res.loc[res.dm==False,Zwk] #Infiltration from the ponding zone to mobile water
+                            #Overall D values - We are going to calculate advection explicitly so won't put it here. 
+                            res.loc[mask,D_jk] = 0#res.loc[:,'D_inf']
+                            res.loc[mask,D_kj] = 0  
+                        else: #Other compartments Djk = 0
                             res.loc[mask,D_jk] = 0
-                            res.loc[mask,D_kj] = 0
+                    #Add Djk to Dt & set nans to zero        
+                    res.loc[np.isnan(res.loc[:,D_jk]),D_jk] = 0        
                     res.loc[mask,Dtj] += res.loc[mask,D_jk]
+                    
             #Subsoil- water, topsoil, roots, air (if no topsoil or pond),drain, pond(if present)
             elif j in ['subsoil','topsoil']:
-                for k in numc: #Inner loop for inter-compartmental values
-                    kind = np.where(numc==k)[0]+1 #The compartment number, for overall & intercompartmental D values
-                    D_jk,D_kj = 'D_'+str(jind[0])+str(kind[0]),'D_'+str(kind[0])+str(jind[0])
+                for kind, k in enumerate(numc): #Inner loop for inter-compartmental values
+                    kind = kind+1 #The compartment number, for overall & intercompartmental D values
+                    D_jk,D_kj = 'D_'+str(jind)+str(kind),'D_'+str(kind)+str(jind)
                     try: #First, check if intercompartmental transport between jk already done
                         res.loc[:,D_jk]
                     except KeyError:
@@ -509,7 +537,7 @@ class SubsurfaceSinks(FugModel):
                                 res.loc[mask,D_jk] = res.loc[mask,D_djk] + res.loc[mask,D_skj] #top- to subsoil 
                                 res.loc[mask,D_kj] = res.loc[mask,D_djk]  #sub- to topsoil
                         elif k in ['rootbody','rootxylem','rootcyl']:
-                            D_rdkj,Vk,Zk= 'D_rd'+str(k)+str(j),'V'+str(k),'Z'+str(kind[0])
+                            D_rdkj,Vk,Zk= 'D_rd'+str(k)+str(j),'V'+str(k),'Z'+str(kind)
                             if k in ['rootbody']:
                                 Nj,Nk,Qetj,tempj,tempk = 'N'+str(j),'N'+str(k),'Qet'+str(j),'temp'+str(j),'temp'+str(k)
                                 Dsr_nj,Dsr_ij,Zw_j,Zwn_j,Zwi_j,Arootj = 'Dsr_n'+str(j),'Dsr_i'+str(j),'Zw_'+str(j),'Zwn_'+str(j),'Zwi_'+str(j),'Aroot'+str(j)
@@ -523,39 +551,257 @@ class SubsurfaceSinks(FugModel):
                                 #Root back to soil
                                 res.loc[mask,Drs_nj] = res.loc[mask,Arootj]*(res.kspn*res.loc[mask,Zwn_k])
                                 res.loc[mask,Drs_ij] = res.loc[mask,Arootj]*(res.kspi*res.loc[mask,Zwi_k]*res.loc[mask,Nk]/(np.exp(res.loc[mask,Nk])-1))
-                                res.loc[mask,Drs_nj], res.loc[mask,Drs_ij] = 0,0 #Set neutral to zero
+                                res.loc[res.chemcharge == 0,Dsr_ij], res.loc[res.chemcharge == 0,Drs_ij] = 0,0 #Set neutral to zero
                                 #Overall D values
                                 res.loc[mask,D_jk] = res.loc[mask,Dsr_nj] + res.loc[mask,Dsr_ij] 
                                 res.loc[mask,D_kj] = res.loc[mask,Drs_nj] + res.loc[mask,Drs_ij]  
                             elif k in ['rootxylem']: 
                                 res.loc[mask,D_apoj] = res.loc[mask,Qetj]*(params.val.f_apo)*(res.loc[mask,Zw_j]) #Apoplast bypass straight to the xylem
                                 res.loc[mask,D_jk] = res.loc[mask,D_apoj] 
-                                res.loc[mask,D_kj] = 0
+                                res.loc[mask,D_kj] = 0                                
                             else:#Central cylinder just root death to topsoil
                                 res.loc[mask,D_jk] = 0
                                 res.loc[mask,D_kj] = 0
                             res.loc[mask,D_rdkj] = (1-params.val.froot_top)*res.loc[mask,Vk] * res.loc[mask,Zk] * params.val.k_rd  #Root death
                             res.loc[mask,D_kj] += res.loc[mask,D_rdkj]
+                        elif k in ['shoots']:
+                            if 'topsoil' in numc and j =='subsoil':
+                                pass
+                            else:
+                                rainrate = pd.DataFrame(np.array(timeseries.loc[(slice(None),'pond'),'QET']),index = timeseries.index.levels[0]).reindex(res.index,level=1).loc[:,0]
+                                #Canopy drip 
+                                res.loc[res.dm==False,'D_cd'] = res.A_shootair * rainrate*(params.val.Ifw - params.val.Ilw)\
+                                       *params.val.lamb * res.Zshoots  
+                                #Wax erosion
+                                res.loc[res.dm==False,'D_we'] = res.A_shootair * params.val.kwe * res.Zshoots   
+                                #litterfall & plant death?
+                                res.loc[res.dm==False,'D_lf'] = res.Vshoots * res.Zshoots   * params.val.Rlf    
+                            #Overall D Values
+                            res.loc[mask,D_jk] = 0
+                            res.loc[res.dm==False,D_kj] = res.D_cd + res.D_we + res.D_lf
                         elif k in ['air']:
                             if 'topsoil' in numc and j =='subsoil':
                                 pass
                             else:
                                 if j == 'subsoil':
-                                    y = res.x #Only the "topsoil" portion has a value for Asoilair
-                                    Bea = res.Bea_subsoil
+                                    y = np.array(res.iloc[0].x/2) #Half the top cell.
+                                    Bea = np.array(res.loc[(res.x == min(res.x)),'Bea_subsoil'])
+                                    #For the BC, only the top of the soil will interact with the air
+                                    masks = (res.x == min(res.x)) 
+                                    maska = res.dm==False
                                 else:
                                     y = Y_topsoil
                                     Bea= res.Bea_topsoil
+                                    #***CHECK BEFORE USE***
+                                    masks = res.dm
+                                    maska = res.dm
                                 Zw_j,D_djk,Deff_j = 'Zw_'+str(j),'D_d'+str(j)+str(k),'Deff_'+str(j)
-                                res.loc[mask,D_djk] = 1/(1/(params.val.ksa*res.Asoilair*res.Zair[res.dm==False])+y/\
-                                       (res.Asoilair*Bea*res.Zair+res.Asoilair*res.loc[:,Deff_j]*res.loc[:,Zw_j])) #Dry diffusion
-                                res.loc[:,'D_wd54'] = res.AtopsoilV*res.Zw5*params.val.RainRate* (1-params.val.Ifw) #Wet gas deposion
-                                res.loc[:,'D_qs'] = res.AtopsoilV * res.Zq5 * params.val.RainRate * res.fpart5 *\
-                                params.val.Q * (1-params.val.Ifw)  #Wet dep of aerosol
-                                res.loc[:,'D_ds'] = res.AtopsoilV * res.Zq5 *  params.val.Up * res.fpart5* (1-Ifd) #dry dep of aerosol                            
+                                Zq_k,Zw_k = 'Zq_'+str(k),'Zw_'+str(k)
+                                #Getting the values in the correct cells took some creative indexing here, making this formula complicated.
+                                res.loc[masks,D_djk] = 1/(1/(params.val.ksa*res[masks].Asoilair*np.array(res.Zair[maska]))\
+                                       +y/(res[masks].Asoilair*Bea*np.array(res.Zair[maska])+\
+                                    res[masks].Asoilair*np.array(res.loc[masks,Deff_j])*np.array(res.loc[masks,Zw_j]))) #Dry diffusion
+                                res.loc[maska,D_djk] = np.array(res.loc[masks,D_djk])
+                                #OK, now we need to bring the rain rate in here. This is somewhat janky but it work, I couldn't get the reindex to work otherwise
+                                rainrate = pd.DataFrame(np.array(timeseries.loc[(slice(None),'pond'),'QET']),index = timeseries.index.levels[0])
+                                #From air to top cell of soil. 
+                                res.loc[maska,'D_wdairsoil'] = res[maska].Asoilair*np.array(res.loc[maska,Zw_k])*rainrate.reindex(res.index,level=1).loc[:,0]\
+                                    *(1-params.val.Ifw) #Wet gas deposion
+                                res.loc[masks,'D_wdairsoil'] = 0
+                                res.loc[maska,'D_qairsoil'] = res[res.dm==False].Asoilair * res.loc[maska,Zq_k] \
+                                    *rainrate.reindex(res.index,level=1).loc[:,0]*res[maska].fpartair*params.val.Q*(1-params.val.Ifw)  #Wet dep of aerosol
+                                res.loc[masks,'D_qairsoil'] = 0
+                                res.loc[maska,'D_dairsoil'] = res[maska].Asoilair * res.loc[maska,Zq_k]\
+                                    *  params.val.Up * res[maska].fpartair* (1-Ifd) #dry dep of aerosol
+                                res.loc[masks,'D_dairsoil'] = 0
+                                #Overall D values
+                                #pdb.set_trace()
+                                #Soil to air - only diffusion
+                                res.loc[masks,D_jk] = res.loc[masks,D_djk] 
+                                #Air to soil - diffusion, wet & dry gas and particle deposition.
+                                res.loc[maska,D_kj] = res.loc[maska,D_djk]+res[maska].D_wdairsoil+res[maska].D_qairsoil+res[maska].D_dairsoil
+                        #Soil/Pond. We are going to treat the advective portion explicitly, then the rest will be implicit.
+                        elif k in ['pond']:
+                            Zq_j,Zq_k,Zw_j,Zw_k = 'Zq_'+str(j),'Zq_'+str(k),'Zw_'+str(j),'Zw_'+str(k),
+                            mask0 = (res.x == min(res.x)) 
+                            #Define pond/water area - for now, same as pond/air
+                            y = np.array(res.iloc[0].x/2) #Half the top cell.
+                            pondD = (pd.DataFrame(np.array(timeseries.loc[(slice(None),'pond'),'Depth']),index = timeseries.index.levels[0])/2).reindex(res.index,level=1).loc[:,0]
+                            Apondsoil = (pd.DataFrame(np.array(timeseries.loc[(slice(None),'pond'),'Area']),index = timeseries.index.levels[0])).reindex(res.index,level=1).loc[:,0]
+                            Apondsoil[pondD==0] = 0 #The pond area is based on a minimum surveyed value of 5.74m², if there is no depth there is no area.
+                            #Particle capture from pond to first cell. This will be advective & explicit, assume 100% capture for now.
+                            res.loc[res.dm==False,'D_qps'] = np.array(res.loc[(slice(None),slice(None),0),'Qin'])*res.loc[res.dm==False,Zq_k]
+                            #Diffusive transfer
+                            res.loc[res.dm==False,'D_dsoilpond'] = 1/(1/(params.val.kxw*Apondsoil[res.dm==False]*res.loc[res.dm==False,Zw_k])\
+                                   +(y)/(Apondsoil[res.dm==False]*np.array(res[mask0].Deff_subsoil)*np.array(res.loc[mask0,Zw_j])))
+                            res.loc[mask0,'D_dsoilpond'] = np.array(res.loc[res.dm==False,'D_dsoilpond']) #This goes both ways, need in both cells.
+                            res.loc[np.isnan(res.D_dsoilpond),'D_dsoilpond'] = 0 #Set nans to zero just in case
+                            #Particle Resuspension
+                            res.loc[mask0,'D_r94'] = params.val.Urx*Apondsoil*res.loc[:,Zq_j]
+                            #Overall D Values - for soil to pond we have diffusion and resuspension
+                            res.loc[mask0,D_jk] = res.D_dsoilpond + res.D_r94
+                            #For pond to soil we will not put the particle transport in as it is calculated explicitly. So, only diffusion.
+                            res.loc[res.dm==False,D_kj] = res.D_dsoilpond
+                        else: #Other compartments Djk  = 0
+                            res.loc[mask,D_jk] = 0
+                    #Add D_jk to DTj for each compartment.
+                    #Set nans to zero to prevent problems.
+                    res.loc[np.isnan(res.loc[:,D_jk]),D_jk] = 0
+                    res.loc[:,Dtj] += res.loc[:,D_jk]
+                    
+            #Roots interact with subsoil, root body, root central cylinder, xylem, shoots
+            elif j in ['rootbody','rootxylem','rootcyl']: 
+                for kind, k in enumerate(numc): #Inner loop for inter-compartmental values
+                    kind = kind+1 #The compartment number, for overall & intercompartmental D values
+                    D_jk,D_kj = 'D_'+str(jind)+str(kind),'D_'+str(kind)+str(jind)
+                    try: #First, check if intercompartmental transport between jk already done
+                        res.loc[:,D_jk]
+                    except KeyError:
+                        if k == j: #Processes that come directly out of the compartment (not to another compartment) go here            
+                            Vj,Zj,D_gj = 'V'+str(j),'Z'+str(jind),"D_g"+str(j)
+                            res.loc[mask,D_gj] = params.val.k_rg*res.loc[mask,Vj]*res.loc[mask,Zj] #Root growth as first order
+                            res.loc[mask,D_jk] = res.loc[mask,D_gj]
+                        #Root body interacts with xylem.
+                        elif (j in ['rootbody']) & (k in ['rootxylem']): 
+                            Nj,Nk,Qetj,tempj,tempk = 'N'+str(j),'N'+str(k),'Qet'+str(j),'temp'+str(j),'temp'+str(k)
+                            Zw_j,Zwn_j,Zwi_j,Zwn_k,Zwi_k = 'Zw_'+str(j),'Zwn_'+str(j),'Zwi_'+str(j),'Zwn_'+str(k),'Zwi_'+str(k),
+                            #These should have been done above but just in case.
+                            res.loc[mask,Nj] = res.chemcharge*params.val.E_plas*params.val.F/(params.val.R*res.loc[:,tempj])
+                            res.loc[mask,Nk] = res.chemcharge*params.val.E_plas*params.val.F/(params.val.R*res.loc[mask,tempk])
+                            #Root body to xylem - interfacial area is Arootxylem
+                            res.loc[mask,'Drx_n'] = res.Arootxylem*(res.kspn*res.fwatrootbody*res.loc[:,Zwn_j]) #A7 is root/xylem interface
+                            res.loc[mask,'Drx_i'] = res.Arootxylem*(res.kspi*res.fwatrootbody*res.loc[:,Zwi_j]\
+                                   *res.loc[mask,Nj]/(np.exp(res.loc[mask,Nj]) - 1))
+                            #xylem to root body - interfacial area is Arootxylem
+                            res.loc[mask,'Dxr_n'] = res.Arootxylem*(res.kspn*res.fwatrootbody*res.loc[:,Zwn_k]) #A7 is root/xylem interface
+                            res.loc[mask,'Dxr_i'] = res.Arootxylem*(res.kspi*res.fwatrootbody*res.loc[:,Zwi_k]\
+                                   *res.loc[mask,Nk]/(np.exp(res.loc[mask,Nk]) - 1))
+                            #Set neutral to zero
+                            res.loc[res.chemcharge == 0,'Drx_i'], res.loc[res.chemcharge == 0,'Dxr_i'] = 0,0 #Set neutral to zero
+                            #Overall D values - note that there isn't any ET flux, all transport across the membrane is diffusive
+                            res.loc[mask,D_jk] = res.loc[:,'Drx_n']+res.loc[:,'Drx_i'] 
+                            res.loc[mask,D_kj] = res.loc[:,'Dxr_n']+res.loc[:,'Dxr_i']       
+                        elif (j in ['rootxylem']) & (k in ['rootcyl']):
+                            #Xylem goes to central cylinder, transport to xylem is accounted for above. Only ET flow (no more membranes!)
+                            Zw_j = 'Zw_'+str(j)
+                            res.loc[mask,'D_xc'] = res.Qet*res.loc[:,Zw_j]
+                            #Overall D values - only one way.
+                            res.loc[mask,D_jk] = res.loc[:,'D_xc']
+                            res.loc[mask,D_kj] = 0
+                        elif (j in ['rootcyl']) & (k in ['shoots']):
+                            #Cylinder goes to shoots!
+                            Zw_j = 'Zw_'+str(j)
+                            #pdb.set_trace()
+                            res.loc[mask,'D_csh'] = res.Qetplant*res.loc[:,Zw_j]
+                            #Flux up the central cylinder. Stays in same compartment but goes vertically up discretized units.
+                            res.loc[(mask) & (res.x != min(res.x)),'D_'+str(jind)+str(jind)] += res.loc[mask,'D_csh']
+                            res.loc[(mask) & (res.x != min(res.x)),Dtj] += res.loc[mask,'D_csh'] 
+                            #Overall D values - only one way, only from top cell.
+                            res.loc[(res.x == min(res.x)) ,D_jk] = res.loc[:,'D_csh']
+                            res.loc[mask,D_kj] = 0                             
                         else: #Other compartments Djk = Dkj = 0
-                            res.loc[mask,D_jk] = res.loc[mask,D_kj] = 0
-                    res.loc[mask,Dtj] += res.loc[mask,D_jk]
+                            res.loc[mask,D_jk] = 0
+                    #Add D_jk to DTj for each compartment.
+                    #Set nans to zero to prevent problems.
+                    res.loc[np.isnan(res.loc[:,D_jk]),D_jk] = 0
+                    res.loc[:,Dtj] += res.loc[:,D_jk]                            
+                            
+            elif j in ['shoots']: #Shoots interact with air, central cylinder & soil. Only air still needs to be done here.
+                for kind, k in enumerate(numc): #Inner loop for inter-compartmental values
+                    kind = kind+1 #The compartment number, for overall & intercompartmental D values
+                    D_jk,D_kj = 'D_'+str(jind)+str(kind),'D_'+str(kind)+str(jind)
+                    try: #First, check if intercompartmental transport between jk already done
+                        res.loc[:,D_jk]
+                    except KeyError:
+                        if k == j: #Processes that come directly out of the compartment (not to another compartment) go here            
+                            #Shoot growth - Modelled as first order decay
+                            Vj,Zj,D_gj = 'V'+str(j),'Z'+str(jind),"D_g"+str(j)
+                            #pdb.set_trace()
+                            res.loc[mask,D_gj] = params.val.k_sg*res.loc[mask,Vj]*res.loc[mask,Zj] #shoot growth as first order
+                            res.loc[mask,D_jk] = res.loc[mask,D_gj]
+                        elif k in ['air']:
+                            Zn_j,Zw_k,Zq_k = 'Zn_'+str(j),'Zw_'+str(k),'Zq_'+str(k)
+                            #Volatilization to air, only neutral species. Ashoots is the interfacial area
+                            res.loc[mask,'D_dshootsair'] = res.kvv*res.A_shootair*res.loc[:,Zn_j]
+                            #OK, now we need to bring the rain rate in here. This is somewhat janky but it work, I couldn't get the reindex to work otherwise
+                            rainrate = pd.DataFrame(np.array(timeseries.loc[(slice(None),'pond'),'QET']),index = timeseries.index.levels[0])
+                            res.loc[mask,'D_rv'] = res.A_shootair * res.loc[:,Zw_k]*rainrate.reindex(res.index,level=1).loc[:,0]\
+                                * params.val.Ifw  #Wet dep of gas to shoots
+                            res.loc[mask,'D_qv'] = res.A_shootair * res.loc[:,Zq_k]*rainrate.reindex(res.index,level=1).loc[:,0]\
+                                * params.val.Q * params.val.Ifw #Wet dep of aerosol
+                            res.loc[mask,'D_dv'] = res.A_shootair * res.loc[:,Zq_k] * params.val.Up *Ifd  #dry dep of aerosol
+                            #Overall D values- only diffusion from shoots to air
+                            res.loc[mask,D_jk] = res.loc[:,'D_dshootsair']
+                            res.loc[mask,D_kj] = res.loc[:,'D_dshootsair'] +res.loc[:,'D_rv']+res.loc[:,'D_qv']+res.loc[:,'D_dv']       
+                        else: #Other compartments Djk = Dkj = 0
+                            res.loc[mask,D_jk] = 0
+                    #Add D_jk to DTj for each compartment.
+                    #Set nans to zero to prevent problems.
+                    res.loc[np.isnan(res.loc[:,D_jk]),D_jk] = 0
+                    res.loc[:,Dtj] += res.loc[:,D_jk] 
+
+            elif j in ['air']: #Air interacts with shoots, soil, pond. Only need to do pond here. 
+                for kind, k in enumerate(numc): #Inner loop for inter-compartmental values
+                    kind = kind+1 #The compartment number, for overall & intercompartmental D values
+                    D_jk,D_kj = 'D_'+str(jind)+str(kind),'D_'+str(kind)+str(jind)
+                    try: #First, check if intercompartmental transport between jk already done
+                        res.loc[:,D_jk]
+                    except KeyError:
+                        if k == j: #Processes that come directly out of the compartment (not to another compartment) go here            
+                            #Shoot growth - Modelled as first order decay
+                            Vj,Zj = 'V'+str(j),'Z'+str(jind)
+                            res.loc[mask,D_jk] = 0 #No additional loss processes from air.
+                        elif k in ['pond']: #Volatilization from pond to air, then normal processes from air to pond
+                            Zn_j,Zw_j,Zq_j,Zw_k = 'Zn_'+str(j),'Zw_'+str(j),'Zq_'+str(j),'Zw_'+str(k)
+                            y = (pd.DataFrame(np.array(timeseries.loc[(slice(None),'pond'),'Depth']),index = timeseries.index.levels[0])/2).reindex(res.index,level=1).loc[:,0]
+                            Apondair = (pd.DataFrame(np.array(timeseries.loc[(slice(None),'pond'),'Area']),index = timeseries.index.levels[0])).reindex(res.index,level=1).loc[:,0]
+                            Apondair[y==0] = 0 #The pond area is based on a minimum surveyed value of 5.74m², if there is no depth there is no area.
+                            #Volatilization to air, only neutral species. Ashoots is the interfacial area
+                            res.loc[mask,'D_dairpond'] = 1/(1/(params.val.kma*Apondair[mask]*res.Zair[mask])\
+                                   +y/(Apondair[mask]*res.loc[mask,'D_air']*res[mask].Zair+\
+                                Apondair[mask]*res.loc[mask,'Deff_pond']*res.loc[mask,Zw_k])) #Dry diffusion
+                            res.loc[np.isnan(res.D_dairpond),'D_dairpond'] = 0 #Set NaNs to zero
+                            #OK, now we need to bring the rain rate in here. This is somewhat janky but it work, I couldn't get the reindex to work otherwise
+                            rainrate = pd.DataFrame(np.array(timeseries.loc[(slice(None),'pond'),'QET']),index = timeseries.index.levels[0])
+                            res.loc[mask,'D_rp'] = Apondair * res.loc[:,Zw_j]*rainrate.reindex(res.index,level=1).loc[:,0]\
+                                * params.val.Ifw  #Wet dep of gas to pond
+                            res.loc[mask,'D_qp'] = Apondair * res.loc[:,Zq_j]*rainrate.reindex(res.index,level=1).loc[:,0]\
+                                * params.val.Q * params.val.Ifw #Wet dep of aerosol
+                            res.loc[mask,'D_dp'] = Apondair * res.loc[:,Zq_j] * params.val.Up *Ifd  #dry dep of aerosol
+                            #Overall D values- only diffusion from shoots to air
+                            res.loc[mask,D_jk] = res.loc[:,'D_dairpond']
+                            res.loc[mask,D_kj] = res.loc[:,'D_dairpond'] +res.loc[:,'D_rp']+res.loc[:,'D_qp']+res.loc[:,'D_dp']                            
+                        else: #Other compartments Djk = 0.
+                            res.loc[mask,D_jk] = 0
+                    #Add D_jk to DTj for each compartment.
+                    #Set nans to zero to prevent problems.
+                    res.loc[np.isnan(res.loc[:,D_jk]),D_jk] = 0
+                    res.loc[:,Dtj] += res.loc[:,D_jk]                             
+                            
+            elif j in ['pond']: #Pond interacts with soil, air and water - sometimes through advection. All done previously 
+                for kind, k in enumerate(numc): #Inner loop for inter-compartmental values
+                    kind = kind+1 #The compartment number, for overall & intercompartmental D values
+                    D_jk,D_kj = 'D_'+str(jind)+str(kind),'D_'+str(kind)+str(jind)
+                    try: #First, check if intercompartmental transport between jk already done
+                        res.loc[:,D_jk]
+                    except KeyError:
+                        if k == j: #Processes that come directly out of the compartment (not to another compartment) go here            
+                            #Exfiltration from pond out of cell & weir overflow
+                            Qpondexf = pd.DataFrame(np.array(timeseries.loc[(slice(None),'pond'),'Q_exf']),index = timeseries.index.levels[0]).reindex(res.index,level=1).loc[:,0]
+                            res.loc[mask,'D_pondexf'] = Qpondexf*res.loc[mask,'Zw_pond']
+                            #Weir overflow
+                            Qpondover = pd.DataFrame(np.array(timeseries.loc[(slice(None),'pond'),'Q_out']),index = timeseries.index.levels[0]).reindex(res.index,level=1).loc[:,0]
+                            res.loc[mask,'D_pondover'] = Qpondover*res.loc[mask,'Zpond']
+                            res.loc[mask,D_jk] = res.loc[:,'D_pondexf']+res.loc[:,'D_pondover']
+                        else: #Other compartments Djk = 0.
+                            res.loc[mask,D_jk] = 0
+                            
+                    #Add D_jk to DTj for each compartment.
+                    #Set nans to zero to prevent problems.
+                    res.loc[np.isnan(res.loc[:,D_jk]),D_jk] = 0
+                    res.loc[:,Dtj] += res.loc[:,D_jk]    
+        #'''
+                
         """
         Old code before it was cool & modular
         #2 Subsoil - From water, to topsoil, to roots
@@ -659,7 +905,7 @@ class SubsurfaceSinks(FugModel):
         res.loc[:,'D_57'] = 0
         res.loc[:,'D_58'] = 0
         
-        #6 Root Body - subsoil, xyle
+        #6 Root Body - subsoil, xylem
         e fraction of root without secondary epothileum
         res.loc[:,'N7'] = res.chemcharge*params.val.E_plas*params.val.F/(params.val.R*res.temp7)
         res.loc[:,'Drx_n'] = (params.val.froot_tip)*res.A7*(res.kspn*res.fwat6*res.Zwn_6) #A7 is root/xylem interface
@@ -698,10 +944,11 @@ class SubsurfaceSinks(FugModel):
         res.loc[:,'D_85'] = 0
         res.loc[:,'D_86'] = 0
         #pdb.set_trace()
+        
         #Ponding Zone - mobile water, shoots, topsoil, air
         if numc >= 9: #Need params.val.Qinf_91 - update with timestep
             #NEED res.depth_ts, res.depth_pond
-            #Top boundary condition of the ponding zone - Mass flux from ponding zone
+            #Top boundary condition of the mobile zone - Mass flux from ponding zone
             res.loc[:,'D_inf'] = params.val.Qinf_91*res.Zw9 #Infiltration from the ponding zone to mobile water
             res.loc[:,'D_exf9'] = res.Q9_exf*res.Zw9
             res.loc[:,'D_d94'] = 1/(1/(params.val.kxw*res.AtopsoilV\
@@ -768,7 +1015,7 @@ class SubsurfaceSinks(FugModel):
             3. Contains a full "input_calc" output dataframe, with a "time" column,
         and everything else. Index level 0 = chems, level 1 = time, level 2 = cell number 
         """
-        pdb.set_trace()
+        #pdb.set_trace()
         try: #See if there is a compartment index in the timeseries
             input_calcs.index.levels[2]
         except AttributeError: #Runs the full flow_time calcs
@@ -781,6 +1028,7 @@ class SubsurfaceSinks(FugModel):
         #Now, we can add the influent concentrations as the upstream boundary condition
         #Assuming chemical concentration in g/m³ activity [mol/m³] = C/Z/molar mass,
         #using Z1 in the first cell (x) (0)
+        #pdb.set_trace()
         if params.val.Pulse == True:
             for chem in chemsumm.index:
                 chem_Min = str(chem) + '_Min'
@@ -799,6 +1047,8 @@ class SubsurfaceSinks(FugModel):
         #Update params on the outside of the timeloop
         params.loc['L','val'] = locsumm.Depth.subsoil + locsumm.Depth.topsoil
         check = np.zeros([len(timeseries.index),len(chemsumm.index)])
+        #Initialize total mass
+        res.loc[:,'M_tot'] = 0
         #lexsort outside the timeloop for better performance
         res = res.sort_index()
         for t in res.index.levels[1]: #Just in case index doesn't start at zero
@@ -831,50 +1081,65 @@ class SubsurfaceSinks(FugModel):
                     #Define a_t so as to be mass conservative - since system is explicit for volumes etc. this can cause mass loss
                     res.loc[(slice(None),t,slice(None)),a_val] = np.array(res.loc[(slice(None),(t-1),slice(None)),M_val])\
                     /np.array(res.loc[(slice(None),(t),slice(None)),V_val])/np.array(res.loc[(slice(None),(t),slice(None)),Z_val])
+                    #For the pond compartment, need to add Qin - advective step at the beginning. Otherwsie when pond dries up mass disappears.
+                    if numc[j] in ['pond']:
+                        res.loc[(slice(None),t,slice(None)),a_val] = np.array(res.loc[(slice(None),(t-1),slice(None)),M_val])\
+                        /np.array(res.loc[(slice(None),(t),slice(None)),V_val]+dt*res.loc[(slice(None),(t),slice(max(res.index.levels[2]))),'Qin'])\
+                        /np.array(res.loc[(slice(None),(t),slice(None)),Z_val])
+                    #Set nans to zero - this will happen to compartments with zero volume such as the roots in the drain cell and the pond
+                    res.loc[np.isnan(res.loc[:,a_val]),a_val] = 0
                 dt = timeseries.time[t] - timeseries.time[t-1] #timestep can vary
             #Now - run it forwards a time step!
             #Feed the time to params
             res_t = res.loc[(slice(None),t,slice(None)),:]
-            if t == 5126: #260 #630#Location of mass influx from tracer test; for error checking
-                pdb.set_trace()
+            if t == 260: #216:#412: #630# 260 is location of mass influx from tracer test; stop at spot for error checking
+                #pdb.set_trace()
                 xxx = 'why'
+                yy = 'seriously stop'
             res_t = self.ADRE_1DUSS(res_t,params,numc,dt)
-            for j in range(0,len(numc)): #Put the results - a value at the next time step and input mass - in the dataframe
+            for j in range(0,len(numc)): #Put sthe results - a value at the next time step and input mass - in the dataframe
                 a_valt1,M_val = 'a'+str(j+1) + '_t1','M'+str(j+1) + '_t1'
                 res.loc[(slice(None),t,slice(None)),a_valt1] = res_t.loc[(slice(None),t,slice(None)),a_valt1]
                 res.loc[(slice(None),t,slice(None)),M_val] = res_t.loc[(slice(None),t,slice(None)),M_val]
-                if j != 0: #no inp_mass for water
-                    pass
-            mass = res.loc[(slice(None),t,slice(None)),'a1_t1']*res.loc[(slice(None),t,slice(None)),'Z1']\
-            *res.loc[(slice(None),t,slice(None)),'V1'] + res.loc[(slice(None),t,slice(None)),'a2_t1']\
-            *res.loc[(slice(None),t,slice(None)),'Z2']*res.loc[(slice(None),t,slice(None)),'V2']
+                res.loc[(slice(None),t,slice(None)),'M_tot'] += res.loc[(slice(None),t,slice(None)),M_val]
+            #Also put the water and soil inputs in.
+            res.loc[(slice(None),t,slice(None)),'Mqin'] = res_t.loc[(slice(None),t,slice(None)),'Mqin']
+            res.loc[(slice(None),t,slice(None)),'Min_p'] = res_t.loc[(slice(None),t,slice(None)),'Min_p']
+
+            #mass = res.loc[(slice(None),t,slice(None)),'a1_t1']*res.loc[(slice(None),t,slice(None)),'Z1']\
+            #*res.loc[(slice(None),t,slice(None)),'V1'] + res.loc[(slice(None),t,slice(None)),'a2_t1']\
+            #*res.loc[(slice(None),t,slice(None)),'Z2']*res.loc[(slice(None),t,slice(None)),'V2']
             
-            if t >= 260:#260 is injection
-                #pdb.set_trace()
-                check[t] = np.array(res.loc[(slice(None),t,0),'Min']) - np.array(mass.groupby(level = 0).sum())
+            if t >= 260:#260:#260 is injection
+                pass
+                #check[t] = np.array(res.loc[(slice(None),slice(None),0),'Min'].groupby(level=0).sum()) - np.array(res.M_tot.groupby(level = 0).sum())
                 #check[t] = np.array(res.loc[(slice(None),260,0),'Min'])\
                 #- np.array(mass.groupby(level = 0).sum())
             else:
-                check[t] = np.array(res.loc[(slice(None),t,0),'Min']) - np.array(mass.groupby(level = 0).sum())
+                check[t] = np.array(res.loc[(slice(None),t,0),'Min']) - np.array(res.M_tot.groupby(level = 0).sum())
                     #res.loc[(slice(None),t,slice(None)),inp_mass] = res_t.loc[(slice(None),t,slice(None)),inp_mass]
             res.loc[(slice(None),t,slice(None)),'M_xf'] = res_t.loc[(slice(None),t,slice(None)),'M_xf']
             res.loc[(slice(None),t,slice(None)),'M_n'] = res_t.loc[(slice(None),t,slice(None)),'M_n']
-            res.loc[(slice(None),t,slice(None)),'M_tot'] = mass
+            #res.loc[(slice(None),t,slice(None)),'M_tot'] = mass
         return res
     
     def mass_flux(self,res_time,numc):
-        """ This function calculates mass fluxes between compartments and
+        """ This function calculates mass fluxes (g/h) between compartments and
         out of the overall system. Calculations are done at the same discretization 
         level as the system, to get the overall mass fluxes for a compartment use 
         mass_flux.loc[:,'Variable'].groupby(level=[0,1]).sum() (result is in mol/h, multiply by dt for total mass)
         """
         #pdb.set_trace()
-        #First determine the number 
-        numx = len(res_time.groupby(level=2))
-        dt = res_time.loc[(res_time.index.levels[0][0],res_time.index.levels[1][1],res_time.index.levels[2][0]),'time']\
-        - res_time.loc[(res_time.index.levels[0][0],res_time.index.levels[1][0],res_time.index.levels[2][0]),'time']
+        #First determine the number
+        numx = res_time.loc[(res_time.index.levels[0][0],res_time.index.levels[1][0],slice(None)),'dm'].sum()
+        res_time.loc[:,'dt'] =  res_time['time'] - res_time['time'].groupby(level=2).shift(1)
+        res_time.loc[(slice(None),min(res_time.index.levels[1]),slice(None)),'dt'] = \
+            np.array(res_time.loc[(slice(None),min(res_time.index.levels[1])+1,slice(None)),'dt'])
         #Make a dataframe to display mass flux on figure
         mass_flux = pd.DataFrame(index = res_time.index)
+        mass_flux.loc[:,'dt'] = np.array(res_time.loc[:,'dt'])
+        #pdb.set_trace()
+
         #First, we will add the advective transport out and in to the first and last
         #cell of each compound/time, respectively
         #N is mass flux, mol/hr
@@ -882,67 +1147,335 @@ class SubsurfaceSinks(FugModel):
         #N_effluent = (res_time.M_n[slice(None),slice(None),numx-1] - res_time.M_xf[slice(None),slice(None),numx-1])/dt
         #N_effluent = np.array(res_time.a1_t[slice(None),slice(None),numx-1]*res_time.Z1[slice(None),slice(None),numx-1]\
         #                                    *res_time.Qout[slice(None),slice(None),numx-1])
-        N_effluent = np.array(res_time.a1_t1[slice(None),slice(None),numx-1]*res_time.Z1[slice(None),slice(None),numx-1]\
+        N_effluent = np.array(res_time.a1_t[slice(None),slice(None),numx-1]*res_time.Z1[slice(None),slice(None),numx-1]\
                                             *res_time.Qout[slice(None),slice(None),numx-1])
-        N_fd = (res_time.M_n[slice(None),slice(None),numx-2] - res_time.M_xf[slice(None),slice(None),numx-2])/dt
+        #N_fd = (res_time.M_n[slice(None),slice(None),numx-2] - res_time.M_xf[slice(None),slice(None),numx-2])/dt
         mass_flux.loc[:,'N_effluent'] = 0
         mass_flux.loc[(slice(None),slice(None),numx-1),'N_effluent'] = N_effluent
-        mass_flux.loc[:,'N_influent'] = res_time.Min/dt #This assumes inputs are zero
+        mass_flux.loc[:,'N_influent'] = res_time.Min/res_time.dt #This assumes inputs are zero
         #Now, lets get to compartment-specific transport
-        for j in numc:#j is compartment mass is leaving
-            jind = np.where(numc==j)[0]+1 #The compartment number, for overall & intercompartmental D values
-            Drj,Nrj,a_val, NTj, DTj= 'Dr' + str(j),'Nr' + str(j),'a'+str(jind[0]) + '_t1','NT' + str(j),'DT' + str(jind[0])
+        for jind, j in enumerate(numc):#j is compartment mass is leaving
+            jind = jind+1 #The compartment number, for overall & intercompartmental D values
+            Drj,Nrj,a_val, NTj, DTj= 'Dr' + str(j),'Nr' + str(j),'a'+str(jind) + '_t1','NT' + str(j),'DT' + str(jind)
+            Nadvj,Dadvj = 'Nadv' + str(j),'Dadv' + str(j)
             #Transformation (reaction) in each compartment Mr = Dr*a*V
             mass_flux.loc[:,Nrj] = (res_time.loc[:,Drj] * res_time.loc[:,a_val])#Reactive mass loss
             mass_flux.loc[:,NTj] = (res_time.loc[:,DTj] * res_time.loc[:,a_val])#Total mass out
+            mass_flux.loc[:,Nadvj] = (res_time.loc[:,Dadvj] * res_time.loc[:,a_val])#Advective mass out.
             if j == 'water': #Water compartment, exfiltration losses
                 mass_flux.loc[:,'N_exf'] = (res_time.loc[:,'D_waterexf'] * res_time.loc[:,a_val])#Exfiltration mass loss
-            for k in numc:#From compartment j to compartment k
+            elif j in ['rootbody','rootxylem','rootcyl','shoots']:
+                #Growth dilution processes - in DT but nowhere else.
+                Nrg_j,D_rgj = "Ng_"+str(j),"D_g"+str(j)
+                mass_flux.loc[:,Nrg_j] = (res_time.loc[:,D_rgj] * res_time.loc[:,a_val])            
+            for kind, k in enumerate(numc):#From compartment j to compartment k
                 if j != k:
-                    kind = np.where(numc==k)[0]+1
-                    Djk,Njk = 'D_'+str(jind[0])+str(kind[0]),'N' +str(j)+str(k)
+                    kind = kind+1
+                    Djk,Dkj,Njk,Nkj,Nnet_jk,ak_val = 'D_'+str(jind)+str(kind),'D_'+str(kind)+str(jind),\
+                    'N' +str(j)+str(k),'N' +str(k)+str(j),'Nnet_' +str(j)+str(k),'a'+str(kind) + '_t1'
                     mass_flux.loc[:,Njk] = (res_time.loc[:,Djk] * res_time.loc[:,a_val])
-        #Growth dilution processes are modelled as first-order decay. For now, add to the reactive M value
-        if len(numc)>2:
-            mass_flux.loc[:,'Nr3'] += (res_time.loc[:,'D_sg'] * res_time.loc[:,'a3_t1'])
-            mass_flux.loc[:,'Nr6'] += (res_time.loc[:,'D_rg6'] * res_time.loc[:,'a6_t1'])
-            mass_flux.loc[:,'Nr7'] += (res_time.loc[:,'D_rg7'] * res_time.loc[:,'a7_t1'])
-            mass_flux.loc[:,'Nr8'] += (res_time.loc[:,'D_rg8'] * res_time.loc[:,'a8_t1'])
-        
-        #Now, let's define the net transfer between compartments that we are interested in.
-        #The convention here is that a positive number is a transfer in the direction indicated, and a negative number is the opposite.
-        mass_flux.loc[:,'Nwss'] = mass_flux.Nwatersubsoil - mass_flux.Nsubsoilwater
-        if len(numc) > 2:
-            mass_flux.loc[:,'Nssts'] = mass_flux.N14 - mass_flux.N24
-            mass_flux.loc[:,'Nssrb'] = mass_flux.N26 - mass_flux.N62
-            mass_flux.loc[:,'Ntsrb'] = mass_flux.N46 - mass_flux.N64
-            mass_flux.loc[:,'Ntsa'] = mass_flux.N45 - mass_flux.N54
-            mass_flux.loc[:,'Nrbx'] = mass_flux.N67 - mass_flux.N76
-            mass_flux.loc[:,'Nxc'] = mass_flux.N78 - mass_flux.N87
-            mass_flux.loc[:,'Ncs'] = mass_flux.N83 - mass_flux.N38
-            mass_flux.loc[:,'Nsts'] = mass_flux.N34 - mass_flux.N43
-            mass_flux.loc[:,'Nsa'] = mass_flux.N35 - mass_flux.N53
-        if len(numc) == 9:
-            mass_flux.loc[:,'Npw'] = mass_flux.N91 - mass_flux.N19
-            mass_flux.loc[:,'Npts'] = mass_flux.N94 - mass_flux.N49
-            mass_flux.loc[:,'Npa'] = mass_flux.N95 - mass_flux.N59
-        
-        #Overall 'removal' (put in last cell, defined as inlet - outlet) as:
-        #Runtime warning prevented this from working in the main dataframe, so do outside then put in
-        '''
-        rem = (np.array(mass_flux.loc[(slice(None),slice(None),0),'N_influent'].groupby(level=0).cumsum())\
-                       -np.array(mass_flux.loc[(slice(None),slice(None),numx-1),'N_effluent'].groupby(level=0).cumsum()))\
-                       /np.array(mass_flux.loc[(slice(None),slice(None),0),'N_influent'].groupby(level=0).cumsum())
-        mass_flux.loc[(slice(None),slice(None),numx-1),'removal']  = rem             
-        mass_flux.loc[np.isnan(mass_flux.removal),'removal']=0
-        mass_flux.loc[np.isinf(mass_flux.removal),'removal']=0
-        '''
+                    mass_flux.loc[:,Nkj] = (res_time.loc[:,Dkj] * res_time.loc[:,ak_val])
+                    mass_flux.loc[:,Nnet_jk]  = mass_flux.loc[:,Njk] - mass_flux.loc[:,Nkj]
+                    
         return mass_flux
     
-    def mass_balance(self,res_time,numc):
-        mass_flux = self.mass_flux(res_time,numc)
-        #Just do for times
-        res = mass_flux
+    def mass_balance(self,res_time,numc,mass_flux = None,normalized = False):
+        """ This function calculates a mass balance and the mass transfers (g) between compartments 
+        on a whole-compartment basis.
+        Attributes:
+            res_time (dataframe) - output from self.run_it
+            numc (list) - Compartments in the system.
+            mass_flux (dataframe, optional) - output from self.mass_flux. Will be calculated from res_time if absent.
+            normalized (bool, optional) = Normalize the mass transfers to the total mass that has entered the system.
+                Note that this will only normalize certain outputs
+        """        
+        #pdb.set_trace()
+        #For testing
+        #Min = res_time.Min.groupby(level=0).sum()
+        #stop = 'stop'
+        try:
+            mass_flux.loc[:,'dt']
+        except AttributeError:
+            mass_flux = self.mass_flux(res_time,numc)
+        #Mass balance at teach time step.
+        mbal = pd.DataFrame(index = (mass_flux.N_effluent).groupby(level=[0,1]).sum().index)
+        #First, add the things that are always going to be there.
+        mbal.loc[:,'time'] = np.array(res_time.loc[(slice(None),slice(None),slice(0)),'time'])
+        mbal.loc[:,'Min'] = res_time.Min.groupby(level=[0,1]).sum().groupby(level=0).cumsum()
+        mbal.loc[:,'Mtot'] = res_time.M_tot.groupby(level=[0,1]).sum()
+        if normalized == True:
+            divisor = mbal.Min+mbal.loc[(slice(None),mbal.index.levels[1][0]),'Mtot'].reindex(mbal.index,method ='ffill')
+        else:
+            divisor = 1
+        mbal.loc[:,'Meff'] = (mass_flux.dt*mass_flux.N_effluent).groupby(level=[0,1]).sum()/divisor
+        mbal.loc[:,'Mexf'] = (mass_flux.dt*mass_flux.N_exf).groupby(level=[0,1]).sum()/divisor
+        mbal.loc[:,'Mout'] = ((mass_flux.dt*mass_flux.N_effluent).groupby(level=[0,1]).sum() +\
+                             (mass_flux.dt*mass_flux.N_exf).groupby(level=[0,1]).sum()).groupby(level=0).cumsum()
+        #(mbal.loc[:,'Meff'].groupby(level=0).cumsum()+mbal.loc[:,'Mexf'].groupby(level=0).cumsum())
+        
+        #mbal.loc[:,'Mbal2'] = 0.0
+        for jind, j in enumerate(numc):#j is compartment mass is leaving
+            jind = jind+1 #The compartment number, for overall & intercompartmental D values
+            Nrj,Nadvj,Moutj,Mbalj,Mjind,Mj,Minj,Madvj,Mrj= 'Nr' + str(j),'Nadv' + str(j),'Mout' + str(j),'Mbal' + str(j),\
+                'M'+str(jind)+'_t1','M'+str(j),'Min'+str(j),'Madv'+str(j),'Mr'+str(j)
+            #Moutj here gives the mass out of the entire system.
+            mbal.loc[:,Mrj] = (mass_flux.dt*mass_flux.loc[:,Nrj]).groupby(level=[0,1]).sum()/divisor
+            mbal.loc[:,Madvj] = (mass_flux.dt*mass_flux.loc[:,Nadvj]).groupby(level=[0,1]).sum()/divisor                                 
+            mbal.loc[:,Moutj] = (mbal.loc[:,Mrj]+mbal.loc[:,Madvj])
+            #Total mass out of system - cumulative
+            mbal.loc[:,'Mout'] += ((mass_flux.dt*mass_flux.loc[:,Nrj]).groupby(level=[0,1]).sum() +\
+                                  (mass_flux.dt*mass_flux.loc[:,Nadvj]).groupby(level=[0,1]).sum()).groupby(level=0).cumsum()
+            #(mbal.loc[:,Mrj].groupby(level=0).cumsum()+mbal.loc[:,Madvj].groupby(level=0).cumsum())
+            #initialize
+            mbal.loc[:,Minj] = 0
+            for kind, k in enumerate(numc):
+                #We will define net transfer as Mjk - Mkj (positive indicates positive net transfer from j to k)
+                if ('Mnet'+str(k)+str(j)) in mbal.columns:
+                    pass 
+                elif k != j:
+                    Njk,Nkj,Mjk,Mkj,Mnetjk = 'N' +str(j)+str(k),'N' +str(k)+str(j),'M'+str(j)+str(k),'M'+str(k)+str(j),'Mnet'+str(j)+str(k)
+                    #Mass into each compartment will berecorded as that compartment's Mjk
+                    mbal.loc[:,Mkj] = (mass_flux.dt*mass_flux.loc[:,Nkj]).groupby(level=[0,1]).sum()/divisor
+                    mbal.loc[:,Minj] += mbal.loc[:,Mkj]
+                    #Mass out per time step. 
+                    mbal.loc[:,Mjk] = (mass_flux.dt*mass_flux.loc[:,Njk]).groupby(level=[0,1]).sum()/divisor              
+                    mbal.loc[:,Moutj] += mbal.loc[:,Mjk]
+                    mbal.loc[:,Mnetjk] = mbal.loc[:,Mjk] - mbal.loc[:,Mkj]
+            #Mass balance for each compartment            
+            #For water and soil, we also have mass coming in from the pond zone
+            if j in 'water':
+                mbal.loc[:,'Minp']=res_time.Min_p.groupby(level=[0,1]).sum()/divisor
+                mbal.loc[:,Minj]+= mbal.loc[:,'Minp']
+                mbal.loc[:,'Mnetwaterpond'] += -mbal.loc[:,'Minp'] #Negative as from pond to water.
+                #For water also need to account for advection out of the system.
+                mbal.loc[:,Moutj]+=mbal.loc[:,'Meff']+mbal.loc[:,'Mexf']
+                
+            elif j in 'subsoil':
+                mbal.loc[:,'Minq'] = res_time.Mqin.groupby(level=[0,1]).sum()/divisor
+                mbal.loc[:,Minj] += mbal.loc[:,'Minq']
+                mbal.loc[:,'Mnetsubsoilpond'] += -mbal.loc[:,'Minq'] #Negative as from pond to water
+
+            elif j in ['rootbody','rootxylem','rootcyl','shoots']:
+                #Growth dilution processes - in DT but nowhere else.
+                Nrg_j,Mgj = "Ng_"+str(j),"Mg"+str(j)
+                mbal.loc[:,Mgj] = (mass_flux.dt*mass_flux.loc[:,Nrg_j]).groupby(level=[0,1]).sum()/divisor
+                mbal.loc[:,Moutj] += mbal.loc[:,Mgj]
+                mbal.loc[:,'Mout'] += (mass_flux.dt*mass_flux.loc[:,Nrg_j]).groupby(level=[0,1]).sum().groupby(level=0).cumsum()
+            #If normalized, Mj = absolute mass in compartment. Otherwise, percentage of mass in compartment at a time step (distribution)
+            if normalized == True:
+                mbal.loc[:,Mj] = res_time.loc[:,Mjind].groupby(level=[0,1]).sum()/divisor
+            else:
+                mbal.loc[:,Mj] = res_time.loc[:,Mjind].groupby(level=[0,1]).sum()
+            #Positive indicates more mass entered than left in a time step
+            mbal.loc[:,Mbalj] = (-res_time.loc[:,Mjind].groupby(level=[0,1]).sum()+res_time.loc[:,Mjind].groupby(level=[0,1]).sum().shift(1))/divisor\
+                                +mbal.loc[:,Minj]-mbal.loc[:,Moutj]                                
+            mbal.loc[(slice(None),min(mbal.index.levels[1])),Mbalj] = 0.0         
+        mbal.loc[:,'Mbal'] = (mbal.loc[:,'Mout']+mbal.loc[:,'Mtot'])/divisor
+        if np.sum(divisor) == 1:
+            mbal.loc[mbal.Min==0,'Mbal'] = 0
+        else: 
+            mbal.loc[mbal.Min==0,'Mbal'] = 1
+        
+        #mbal.loc[:,'Mbal2'] = (mbal.loc[:,'Mbal2'])/mbal.Min           
+        return mbal         
+
+    def mass_balance_cumulative(self,numc,res_time=None,mass_flux = None,mass_balance = None,normalized=False):
+        """ This function calculates cumulative mass transfers between compartments 
+        on a whole-compartment (non spatially discretized) basis. 
+        Attributes:
+            numc - list of compartments.
+            res_time (optional) - output from self.run_it. Needed if mass_balance not given.
+            mass_flux (optional) - output from self.mass_flux. Needed if mass_balance not given.
+            mass_balance (dataframe, optional) - Non-normalized output from mass_balance
+            normalized (bool, optional) = Normalize the mass transfers to the total mass that has entered the system.
+                Note that this will only normalize certain outputs
+        """  
+        #pdb.set_trace()
+        #Set up mbal. Need to run as non-normalized in order for normalization here to work. Might fix this later, for now it is good enough
+        try:
+            mbal = mass_balance
+        except AttributeError:                
+            try:
+                mbal = self.mass_balance(res_time,numc,mass_flux,normalized = False)
+            except AttributeError:
+                mbal = self.mass_balance(res_time,numc,normalized = False)
+        #We need to get the cumulative mass fluxes. The overall values in mbal are cumulative already, so need some caution.
+        #Start us off with those that will always be in the mbal dataframe, don't need to be cumulatively summed
+        mbal_cum = mbal.loc[:,['time','Min','Mtot']]
+        if normalized == True:
+            divisor = mbal.Min+mbal.loc[(slice(None),mbal.index.levels[1][0]),'Mtot'].reindex(mbal.index,method ='ffill')
+        else:
+            divisor = 1    
+        mbal_cum =  pd.concat([mbal_cum,mbal.loc[:,['Meff','Mexf','Minp','Minq']].groupby(level=0).cumsum()],axis=1)
+        mbal_cum.loc[:,['Meff','Mexf','Mtot','Minp','Minq']] =  mbal_cum.loc[:,['Meff','Mexf','Mtot','Minp','Minq']].mul(1/divisor,axis="index")
+        for j in numc:#j is compartment mass is leaving
+            Mj,Madvj,Mrj= 'M'+str(j),'Madv'+str(j),'Mr'+str(j)
+            #Mass is not cumulative.
+            if normalized == True:
+                mbal_cum.loc[:,Mj] = mbal.loc[:,Mj]/divisor
+            else:
+                mbal_cum.loc[:,Mj] = mbal.loc[:,Mj]
+            mbal_cum.loc[:,Madvj] = mbal.loc[:,Madvj].groupby(level=0).cumsum()/divisor
+            mbal_cum.loc[:,Mrj] = mbal.loc[:,Mrj].groupby(level=0).cumsum()/divisor
+            if j in ['rootbody','rootxylem','rootcyl','shoots']:
+                #Growth dilution processes - in DT but nowhere else.
+                Mgj = "Mg"+str(j)
+                mbal_cum.loc[:,Mgj] = mbal.loc[:,Mgj].groupby(level=0).cumsum()/divisor
+            #Intercompartmental transfer. For net transfer, we only need to calculate once - as Mnetjk = Mjk-Mkj
+            for k in numc:
+                if ('Mnet'+str(k)+str(j)) in mbal_cum.columns:
+                    pass
+                elif k != j:
+                    Mjk, Mkj, Mnetjk = 'M'+str(j)+str(k),'M'+str(k)+str(j),'Mnet'+str(j)+str(k)
+                    mbal_cum.loc[:,Mjk] = mbal.loc[:,Mjk].groupby(level=0).cumsum()/divisor
+                    mbal_cum.loc[:,Mkj] = mbal.loc[:,Mkj].groupby(level=0).cumsum()/divisor
+                    mbal_cum.loc[:,Mnetjk] = mbal.loc[:,Mnetjk].groupby(level=0).cumsum()/divisor
+        return mbal_cum
+    
+    def conc_out(self,numc,timeseries,chemsumm,res_time,mass_flux=None):
+        """ This function calculates modeled concentrations at the outlet for all chemicals present.
+        """
+        #pdb.set_trace()
+        try:
+            mass_flux.loc[:,'dt']
+        except AttributeError:
+            mass_flux = self.mass_flux(res_time,numc)
+        numx = res_time.loc[(res_time.index.levels[0][0],res_time.index.levels[1][0],slice(None)),'dm'].sum()
+        #pdb.set_trace()
+        Couts = pd.DataFrame(np.array(res_time.loc[(min(res_time.index.levels[0]),slice(None),numx-1),'time']),
+                                          index = res_time.index.levels[1],columns=['time'])
+        Couts.loc[:,'Qout_meas'] = timeseries.loc[:,'Qout_meas']
+        Couts.loc[:,'Qout_est'] = np.array(res_time.loc[(min(res_time.index.levels[0]),slice(None),numx-1),'Qout'])
+        for chem in mass_flux.index.levels[0]:
+            Couts.loc[:,chem+'_Coutmeas'] = timeseries.loc[:,chem+'_Coutmeas']
+            #Concentration = mass flux/Q*MW
+            Couts.loc[:,chem+'_Coutest'] = np.array(mass_flux.loc[(chem,slice(None),slice(None)),'N_effluent'].groupby(level=1).sum())\
+                                            /np.array(Couts.loc[:,'Qout_est'])*np.array(chemsumm.loc[chem,'MolMass'])
+            Couts.loc[np.isnan(Couts.loc[:,chem+'_Coutest']),chem+'_Coutest'] = 0.                      
+        
+        return Couts
+    
+    def mass_distribution(self,numc,res_time,timeseries,chemsumm,normalized = 'compartment'):
+        """ 
+        This function calculates modeled mass distributions for the different compartments. Large dataframe, same indices as res_time
+        
+        Attributes:
+            normalized (string, optional) - 'True'/'t' will normalize to total mass in system (inlfuent + M0), 'False'/'f' = no normalization, 
+                'compartment'/'c' to mass in each compartment at each time, 'overall'/'o' is overall mass M_tot
+        """
+        #pdb.set_trace()
+        mdist = res_time.loc[:,['x','time']] #If timeseries has spin-up period, skip to actual times
+        if normalized[0].lower() == 't':
+            res_time.loc[np.isnan(res_time.Min),'Min'] = 0    
+            divisor = res_time.Min+res_time.loc[(slice(None),res_time.index.levels[1][0],slice(None)),
+                                                    'M_tot'].reindex(res_time.index,method ='ffill')
+            divisor = divisor.groupby(level=[0]).cumsum()
+        elif normalized[0].lower() == 'o': #overall/total mass 
+            divisor = res_time.M_tot
+        else:
+            divisor = 1.
+            
+        for jind,j in enumerate(numc):
+            jind = jind+1
+            M_val= 'M'+str(jind) + '_t1'
+            #Divide by the total mass in each compartment
+            if normalized[0].lower() == 'c':
+                divisor = res_time.loc[:,M_val].groupby(level=[0,1]).sum().reindex(res_time.index,method ='ffill')        
+            mdist.loc[:,'M'+str(j)] = res_time.loc[:,M_val]/divisor
+        #mdist = mdist.fillna(0)
+        return mdist
+    
+            
+    def model_fig(self,numc,mass_balance,time=None,compound=None,figname='20210217_BC_Model_Figure_rgb.tif',dpi=100,fontsize=8,figheight=6):
+        """ 
+        Show modeled fluxes and mass distributions on a figure. 
+        Attributes:
+            mass_balance = Either the cumulative or the instantaneous mass balance, as output by the appropriate functions, normalized or not
+            figname (str, optional) = name of figure on which to display outputs. Default figure should be in the same folder
+            time (float, optional) = Time to display, in hours. Default will be the last timestep.
+            compounds (str, optional) = Compounds to display. Default is all.
+        """
+        #pdb.set_trace()
+        #Set up attributes that weren't given
+        mbal = mass_balance
+        if time is None:
+            time = mbal.index.levels[1][-1]#Default is at the end of the model run.
+        else:#Otherwise, find the time index from the given time in hours    
+            time = mbal.index.levels[1][np.where(mbal.loc[(mbal.index.levels[0][0],
+                                        slice(None)),'time']== find_nearest(mbal.loc[(mbal.index.levels[0][0],
+                                        slice(None)),'time'],time))][0]
+        if compound != None:
+            mbal = mbal.loc[(compound,time),:]
+        else:
+            mbal = mbal.loc[(mbal.index.levels[0][0],time),:]
+        img = plt.imread(figname)
+        figsize = (img.shape[1]/img.shape[0]*figheight,figheight)
+        fig, ax = plt.subplots(figsize=figsize, dpi = dpi)
+        ax.grid(False)
+        plt.axis('off')    
+        #Define the locations where the mass transfers (g) will be placed.
+        '''
+        dM_locs = {'Meff':(2500,3650),'Min':(300,3420),'Mexf':(2300,3420),'Mrwater':(2120,2350),
+                  'Mrsubsoil':(2550,2480),'Mrrootbody':(700,1050),'Mrrootxylem':(2550,1400),
+                  'Mrrootcyl':(300,700),'Mrshoots':(1780,1160),'Mrair':(2110,1300),
+                  'Mrpond':(2350,1180),'Mnetwatersubsoil':(900,3350),'Mnetwaterpond':(200,3100),
+                  'Mnetsubsoilrootbody':(1980,2020),'Mnetsubsoilshoots':(2040,1780),
+                  'Mnetsubsoilair':(200,2200),'Mnetrootbodyrootxylem':(2480,2060),
+                  'Mnetrootxylemrootcyl':(2580,1860),'Mnetrootcylshoots':(1470,2410),
+                  'Mnetshootsair':(800,2325),'Mnetairpond':(700,1600),'Madvair':(700,1600),'Madvpond':(2500,3350)}
+
+        #Location of the massess
+        M_locs = {'Mwater':(1870,3460),'Msubsoil':(1870,3280),'Mrootbody':(2300,330),
+                'Mrootxylem':(2300,500),'Mrootcyl':(2300,690),'Mshoots':(2300,180),
+                'Mair':(2410,2820),'Mpond':(2350,690)}     
+        '''        
+        dM_locs = {'Meff':(0.835,0.215),'Min':(0.013,0.490),'Mexf':(0.581,0.235),'Mrwater':(0.850,0.360),
+                  'Mrsubsoil':(0.82,0.280),'Mrrootbody':(0.560,0.780),'Mrrootxylem':(0.73,0.835),
+                  'Mrrootcyl':(0.835,0.775),'Mrshoots':(0.135,0.760),'Mrair':(0.025,0.830),
+                  'Mrpond':(0.794,0.560),'Mnetwatersubsoil':(0.046,0.295),'Mnetwaterpond':(0.18,0.360),
+                  'Mnetsubsoilrootbody':(0.679,0.664),'Mnetsubsoilshoots':(0.260,0.387),
+                  'Mnetsubsoilair':(0.636,0.545),'Mnetsubsoilpond':(0.013,0.390),'Mnetrootbodyrootxylem':(0.835,0.635),
+                  'Mnetrootxylemrootcyl':(0.875,0.680),'Mnetrootcylshoots':(0.50,0.443),
+                  'Mnetshootsair':(0.489,0.585),'Mnetairpond':(0.090,0.545),'Madvair':(0.828,0.885),'Madvpond':(0.850,0.475)}
+        #Location of the massess
+        M_locs = {'Mwater':(0.075,0.242),'Msubsoil':(0.075,0.217),'Mrootbody':(0.530,0.930),
+                'Mrootxylem':(0.747,0.930),'Mrootcyl':(0.747,0.961),'Mshoots':(0.530,0.961),
+                'Mair':(0.095,0.955),'Mpond':(0.739,0.453)}             
+        for j in numc:#j is compartment mass is leaving
+            Mj,Mrj = 'M'+str(j),'Mr'+str(j) 
+            pass
+            ax.annotate(f'{mbal.loc[Mj]:.2e}',xy = M_locs[Mj],fontsize = fontsize, fontweight = 'bold',xycoords='axes fraction') #Mass distribution if normalized, abs. mass if not. At time t        
+            ax.annotate(f'{mbal.loc[Mrj]:.2e}',xy = dM_locs[Mrj],fontsize = fontsize, fontweight = 'bold',xycoords='axes fraction')
+            if j in ['water']: #Add effluent and exfiltration advection
+                ax.annotate(f'{mbal.loc["Meff"]:.2e}',xy = dM_locs['Meff'],fontsize = fontsize, fontweight = 'bold',xycoords='axes fraction')
+                ax.annotate(f'{mbal.loc["Mexf"]:.2e}',xy = dM_locs['Mexf'],fontsize = fontsize, fontweight = 'bold',xycoords='axes fraction')
+                if 'pond' in numc: #Need to reverse some to display with appropriate conventions.
+                    mbal.loc['Mnetwaterpond'] = -mbal.loc['Mnetwaterpond'] 
+            elif j in ['subsoil']:#Mass enters the pond.
+                if 'pond' in numc:
+                    mbal.loc['Mnetsubsoilpond'] = -mbal.loc['Mnetsubsoilpond'] 
+                if 'shoots' in numc:
+                    mbal.loc['Mnetsubsoilshoots'] = -mbal.loc['Mnetsubsoilshoots']                 
+            elif j in ['pond']:#Add mass in - goes to pond zone, NOT normalized.
+                ax.annotate(f'{mbal.loc["Min"]:.2e}',xy = dM_locs['Min'],fontsize = fontsize, fontweight = 'bold',xycoords='axes fraction')
+                ax.annotate(f'{mbal.loc["Madvpond"]:.2e}',xy = dM_locs['Madvpond'],fontsize = fontsize, fontweight = 'bold',xycoords='axes fraction')
+            elif j in ['air']:#Air has advection out the back end
+                ax.annotate(f'{mbal.loc["Madvair"]:.2e}',xy = dM_locs['Madvair'],fontsize = fontsize, fontweight = 'bold',xycoords='axes fraction')
+            for k in numc:
+                if (('Mnet'+str(j)+str(k)) not in dM_locs.keys()):
+                    pass
+                else:
+                    Mnetjk = 'Mnet'+str(j)+str(k)
+                    ax.annotate(f'{mbal[Mnetjk]:.2e}',xy = dM_locs[Mnetjk],fontsize = fontsize, fontweight = 'bold',xycoords='axes fraction')
+        ax.annotate(compound,xy = (0,1),fontsize = fontsize+2, fontweight = 'bold',xycoords='axes fraction')
+#       '''
+        #stop = 'stop'               
+        ax.imshow(img,aspect='auto')
+        return fig,ax
+#(((res.dt*mass_flux.N_effluent).groupby(level=[0,1]).sum().cumsum()+(res.dt*mass_flux.Nrwater).groupby(level=[0,1]).sum().cumsum()\
+#         +(res.dt*mass_flux.N_exf).groupby(level=[0,1]).sum().cumsum()+(res.dt*mass_flux.Nrsubsoil).groupby(level=[0,1]).sum().cumsum())\
+#    +res.loc[:,'M_tot'].groupby(level=[0,1]).sum())/res.Min.groupby(level=[0,1]).sum().cumsum()
+        
         
         
         
