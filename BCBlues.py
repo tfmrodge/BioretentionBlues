@@ -272,7 +272,7 @@ class BCBlues(SubsurfaceSinks):
             fwatj, fairj, tempj, pHj = 'fwat' + str(j), 'fair' + str(j),'temp' + str(j), 'pH' + str(j)
             rhopartj, fpartj, advj = 'rhopart' + str(j),'fpart' + str(j),'adv' + str(j)
             compartment = j
-            if compartment not in ['topsoil', 'drain_pores', 'filter']:#These compartments are ignored
+            if compartment not in ['topsoil', 'drain_pores', 'filter']:#These compartments are only used for flows
                 if compartment in ['rootbody', 'rootxylem', 'rootcyl']: #roots are discretized
                     mask= res.dm
                     if compartment in ['rootbody']:
@@ -607,6 +607,7 @@ class BCBlues(SubsurfaceSinks):
             rainrate = timeseries.RainRate[t] #mm/h
             inflow = timeseries.Qin[t] #m³/h
             params.loc['fvalveopen','val'] = timeseries.fvalveopen[t]
+            
             #pdb.set_trace()
             #Hardcoding switch in Kf after tracer event. If Kn2 is in the params it will switch
             if timeseries.time[t] > 7.:
@@ -621,6 +622,8 @@ class BCBlues(SubsurfaceSinks):
             res_t[t] = res.copy(deep=True)
             #Add the 'time' to the resulting dataframe
             res_t[t].loc[:,'time'] = timeseries.loc[t,'time']
+            res_t[t].loc[:,'RH'] = timeseries.loc[t,'RH']
+            res_t[t].loc[:,'RainRate'] = timeseries.loc[t,'RainRate']
             for j in numc:
                 Tj,pHj = 'T'+str(j),'pH'+str(j)
                 res_t[t].loc[j,'Temp'] = timeseries.loc[t,Tj] #compartment temperature
@@ -639,6 +642,7 @@ class BCBlues(SubsurfaceSinks):
             res_time.loc[(slice(None),'air'),'Depth']*3600
         
         return res_time
+
     def draintimes(self,timeseries,res_time):
         """
         Determine the draindage times - time between peak depth and zero depth (https://wiki.sustainabletechnologies.ca/wiki/Bioretention:_Sizing)     
@@ -673,3 +677,36 @@ class BCBlues(SubsurfaceSinks):
             #testchamp = zerodepths[idx] - lastzeroQ
             #if testchamp > champ:
             #    champ = testchamp
+            
+    def BC_fig(self,numc,mass_balance,time=None,compound=None,figname='20210217_BC_Model_Figure_rgb.tif',dpi=100,fontsize=8,figheight=6,dM_locs=None,M_locs=None):
+            """ 
+            Show modeled fluxes and mass distributions on a bioretention cell figure. 
+            Just a wrapper to give the correct figure to the main function
+            Attributes:
+                mass_balance = Either the cumulative or the instantaneous mass balance, as output by the appropriate functions, normalized or not
+                figname (str, optional) = name of figure on which to display outputs. Default figure should be in the same folder
+                time (float, optional) = Time to display, in hours. Default will be the last timestep.
+                compounds (str, optional) = Compounds to display. Default is all.
+            """
+            #pdb.set_trace()
+            try:
+                dM_locs[1]
+            except TypeError:
+                #Define locations of the annotations if not give    
+                dM_locs = {'Meff':(0.835,0.215),'Min':(0.013,0.490),'Mexf':(0.581,0.235),'Mrwater':(0.850,0.360),
+                          'Mrsubsoil':(0.82,0.280),'Mrrootbody':(0.560,0.780),'Mrrootxylem':(0.73,0.835),
+                          'Mrrootcyl':(0.835,0.775),'Mrshoots':(0.135,0.760),'Mrair':(0.025,0.830),
+                          'Mrpond':(0.794,0.560),'Mnetwatersubsoil':(0.046,0.295),'Mnetwaterpond':(0.18,0.360),
+                          'Mnetsubsoilrootbody':(0.679,0.664),'Mnetsubsoilshoots':(0.260,0.387),
+                          'Mnetsubsoilair':(0.636,0.545),'Mnetsubsoilpond':(0.013,0.390),'Mnetrootbodyrootxylem':(0.835,0.635),
+                          'Mnetrootxylemrootcyl':(0.875,0.680),'Mnetrootcylshoots':(0.50,0.443),
+                          'Mnetshootsair':(0.489,0.585),'Mnetairpond':(0.090,0.545),'Madvair':(0.828,0.885),'Madvpond':(0.850,0.475)}
+                #Location of the massess
+                M_locs = {'Mwater':(0.075,0.242),'Msubsoil':(0.075,0.217),'Mrootbody':(0.530,0.930),
+                        'Mrootxylem':(0.747,0.930),'Mrootcyl':(0.747,0.961),'Mshoots':(0.530,0.961),
+                        'Mair':(0.095,0.955),'Mpond':(0.739,0.453)}             
+            fig,ax = self.model_fig(numc,mass_balance=mass_balance,time = time,
+                                    compound=compound,figname=figname,dpi=dpi,
+                                    fontsize=fontsize,figheight=figheight,
+                                    dM_locs=dM_locs,M_locs=M_locs)
+            return fig,ax

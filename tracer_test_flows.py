@@ -17,8 +17,8 @@ import hydroeval #For the efficiency
 from hydroeval import kge #Kling-Gupta efficiency (Kling-Gupta et al., 2009)
 #plt.style.use("ggplot")
 #BC_2 Being used to test immobile fraction impact
-#params = pd.read_excel('params_BC_5.xlsx',index_col = 0)
-params = pd.read_excel('params_BC_synthetic.xlsx',index_col = 0)
+params = pd.read_excel('params_BC_5.xlsx',index_col = 0)
+#params = pd.read_excel('params_BC_synthetic.xlsx',index_col = 0)
 #Testing slow drainage - how would this change performance? 
 #params = pd.read_excel('params_BC_SlowDrain.xlsx',index_col = 0) 
 locsumm = pd.read_excel('Kortright_BC.xlsx',index_col = 0)
@@ -30,13 +30,14 @@ locsumm.iloc[:,slice(0,14)] = locsumm.astype('float') #Convert any ints to float
 chemsumm = pd.read_excel('OPECHEMSUMM.xlsx',index_col =0)
 #emsumm = pd.read_excel('PROBLEMCHEMSUMM.xlsx',index_col = 0)
 #chemsumm = pd.read_excel('EHDPPCHEMSUMM.xlsx',index_col = 0)
-#timeseries = pd.read_excel('timeseries_tracertest_Kortright_valve.xlsx')
+#timeseries = pd.read_excel('timeseries_tracertest_Kortright_extended.xlsx')
+timeseries = pd.read_excel('timeseries_tracertest_Kortright_Short.xlsx')
 #timeseries = pd.read_excel('timeseries_tracertest630Max_Kortright_AllChems.xlsx')
 #timeseries = pd.read_excel('timeseries_tracertest630Max_Test.xlsx')
 #timeseries = pd.read_excel('timeseries_tracertestExtended_Kortright_AllChems.xlsx')
 #timeseries = pd.read_excel('timeseries_tracertestExtended_Kortright_SlowDrain.xlsx')
 #***SYNTHETIC EVENT***
-timeseries = pd.read_excel('timeseries_synthetic.xlsx')
+#timeseries = pd.read_excel('timeseries_synthetic.xlsx')
 #timeseries = pd.read_excel('timeseries_LatterEvent_Kortright.xlsx')
 #Truncate timeseries if you want to run fewer
 numc = np.array(np.concatenate([locsumm.index[0:2].values]),dtype = 'str')
