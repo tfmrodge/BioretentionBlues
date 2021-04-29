@@ -183,9 +183,14 @@ class SubsurfaceSinks(FugModel):
                     res.loc[res.kspi<kspimin,'kspi'] = kspimin
                     #Air side MTC for veg (from Diamond 2001)
                     #Back calculate windspeed in m/s. As the delta_blv requires a windspeed to be calculated, then replace with minwindspeed
-                    windspeed = res.loc[:,'advair']/np.array(np.sqrt(locsumm.Area.air)*locsumm.Depth.air*3600)
+                    try:
+                        windspeed = res.loc[:,'advair']/np.array(np.sqrt(locsumm.Area.air)*locsumm.Depth.air*3600)
+                    except AttributeError:
+                        windspeed = timeseries.WindSpeed
                     windspeed.loc[windspeed==0] = params.val.MinWindSpeed #This will also replace all other compartments
-                    res.loc[:,'delta_blv'] = 0.004 * ((0.07 / windspeed.reindex(res.index,method = 'bfill')) ** 0.5) 
+                    #res.loc[:,'delta_blv'] = 0.004 * ((0.07 / windspeed.reindex(res.index,method = 'bfill')) ** 0.5) 
+                    #res.loc[:,'delta_blv'] = 0.004 * ((0.07 / windspeed.reindex(res.index,level = 0)) ** 0.5) 
+                    res.loc[:,'delta_blv'] = 0.004 * ((0.07 / windspeed.reindex(res.index,level = 1)) ** 0.5) 
                     #delta_blv = 0.004 * ((0.07 / params.val.WindSpeed) ** 0.5) #leaf boundary layer depth, windsped in m/s
                     res.loc[:,'AirDiffCoeff'] = res['dummy'].mul(chemsumm.AirDiffCoeff, level = 0)
                     res.loc[:,'kav'] = res.AirDiffCoeff/res.delta_blv #m/h
@@ -248,18 +253,23 @@ class SubsurfaceSinks(FugModel):
         #indices of the compound names and cell numbers
         #pdb.set_trace()
         #Make the system and add chemical properties
-        chemsumm, res = self.sys_chem(self.locsumm,self.chemsumm,self.params,self.pp,self.numc,timeseries)    
+        chemsumm, res = self.sys_chem(locsumm,chemsumm,params,pp,numc,timeseries)    
         #Declare constants
         #chems = chemsumm.index
         #numchems = len(chems)
         #R = params.val.R #Ideal gas constant, J/mol/K
         #Ifd = 1 - np.exp(-2.8 * params.Value.Beta) #Vegetation dry deposition interception fraction
         Ymob_immob = params.val.Ymob_immob #Diffusion path length from mobile to immobile flow Just guessing here
-        Y_subsoil = locsumm.Depth[1]/2 #Half the depth of the mobile phase
+        #Y_subsoil = locsumm.Depth[1]/2 #Half the depth of the mobile phase
         try:
-            Y_topsoil = params.val.Ytopsoil
+            res.loc[:,'Y_subsoil'] = res.depth_ss/2
+        except AttributeError:    
+            pass
+
+        try:
+             res.loc[:,'Y_topsoil'] = params.val.Ytopsoil
         except AttributeError:
-            Y_topsoil = locsumm.Depth[3]/2 #Diffusion path is half the depth. Probably should make vary in X
+            res.loc[:,'Y_topsoil'] = res.depth_ts/2 #Diffusion path is half the depth. 
         Ifd = 1 - np.exp(-2.8 * params.val.Beta) #Vegetation dry deposition interception fraction
         
         #Calculate activity-based Z-values (m³/m³). This is where things start
@@ -322,15 +332,21 @@ class SubsurfaceSinks(FugModel):
             if j in 'air': #Air we need to determine hygroscopic growth
                 #Aerosol particles - composed of water and particle, with the water fraction defined
                 #by hygroscopic growth of the aerosol. Growth is defined as per the Berlin Spring aerosol from Arp et al. (2008)
-                if params.val.RH > 100: #maximum RH = 100%
-                    params.val.RH = 100
-                #Hardcoded hygroscopic growth factor (GF) not ideal but ¯\_(ツ)_/¯
-                GF = np.interp(params.val.RH/100,xp = [0.12,0.28,0.77,0.92],fp = \
-                        [1.0,1.08,1.43,2.2],left = 1.0,right = params.val.RH/100*5.13+2.2)
+                #Max RH is 100
+                timeseries.loc[timeseries.RH>100.,'RH'] = 100
+                #Berlin Spring aerosol from Arp et al. (2008)
+                try:
+                    GF = np.interp(timeseries.RH.reindex(res.index,level=1)/100,xp = [0.12,0.28,0.77,0.92],fp = \
+                            [1.0,1.08,1.43,2.2],left = 1.0,right = 2.5)
+                except TypeError:
+                    GF = np.interp(timeseries.loc[(slice(None),'air'),'RH']/100,xp = [0.12,0.28,0.77,0.92],fp = \
+                            [1.0,1.08,1.43,2.2],left = 1.0,right = 2.5)
+                    GF = pd.DataFrame(GF,index = res.index.levels[1])
+                    GF = GF.reindex(res.index,level = 1)
                 #Volume fraction of water in aerosol 
                 VFQW_a = (GF - 1) * locsumm.Density.water / ((GF - 1) * \
                           locsumm.Density.water + locsumm.PartDensity.air)
-                res.loc[mask,fwatj] = res.loc[mask,fwatj] + res.loc[mask,fpartj]*VFQW_a #add aerosol water from locsumm
+                res.loc[mask,fwatj] = res.loc[mask,fwatj] + res.loc[mask,fpartj]*VFQW_a[0] #add aerosol water from locsumm
                 res.loc[mask,fairj] = 1 - res.loc[mask,fwatj] - res.loc[mask,fpartj]
                 #mask = res.dm #Change the mask so that Z values will be calculated across all x, to calculate diffusion
             res.loc[mask,Zij] = res.loc[mask,fwatj]*res.loc[mask,Zwi_j]+res.loc[mask,fpartj]\
@@ -424,7 +440,14 @@ class SubsurfaceSinks(FugModel):
             res.loc[:,'Zw9'] = res.fwat9*(res.Zwi_9) + res.fwat9*(res.Zwn_9)
             res.loc[:,'Zq9'] = res.fpart9*(res.Zqi_9)+res.fpart9*(res.Zqn_9) 
         """
-        
+        #Set the rainrate for wet deposition processes
+        if 'air' in numc:
+            try:
+                rainrate = pd.DataFrame(np.array(timeseries.loc[(slice(None),'pond'),'QET']),index = timeseries.index.levels[0]).reindex(res.index,level=1).loc[:,0]
+                #Test this.
+                rainrate = rainrate.reindex(res.index,level=1).loc[:,0]
+            except KeyError:
+                rainrate = timeseries.RainRate.reindex(res.index,method = 'bfill')
         #D values (m³/h), N (mol/h) = a*D (activity based)
         #Loop through compartments to set D values
         #pdb.set_trace()
@@ -465,7 +488,7 @@ class SubsurfaceSinks(FugModel):
                                 y = Ymob_immob
                                 A = res.Asubsoil
                             elif k in ['topsoil']:
-                                y = Y_topsoil
+                                y = res.Y_topsoil
                                 A = res.AsoilV
                             D_djk,D_mjk,Detjk,Zwk,Zk,Qetk = 'D_d'+str(j)+str(k),'D_m'+str(j)+str(k),'Det'+str(j)+str(k),\
                             'Zw_'+str(k),'Z'+str(k),'Qet'+str(k)
@@ -481,7 +504,7 @@ class SubsurfaceSinks(FugModel):
                             res.loc[mask,D_mjk] = params.val.wmim*res.loc[mask,fwatk]*res.loc[mask,Vk]*res.loc[mask,Zwk] #Mixing of mobile & immobile water
                             res.loc[mask,Detjk] = res.loc[mask,Qetk]*res.loc[mask,Zwk] #ET flow goes through subsoil first - may need to change
                             res.loc[mask,D_jk] = res.loc[mask,D_djk] + res.loc[mask,Detjk] + res.loc[mask,D_mjk]
-                            res.loc[mask,D_kj] = res.loc[mask,D_djk]+ res.loc[mask,D_mjk]
+                            res.loc[mask,D_kj] = res.loc[mask,D_djk]+ res.loc[mask,D_mjk]/params.val.immobmobfac
                         #If there is a ponding zone, then the activity at the upstream boundary condition is the activity in the pond.
                         #We will have to make this explicit at the beginning of the ADRE
                         elif k in ['pond']:
@@ -513,7 +536,7 @@ class SubsurfaceSinks(FugModel):
                                 y = Ymob_immob
                                 A = res.Asubsoil
                             elif j == 'topsoil':
-                                y = Y_topsoil
+                                y = res.Y_topsoil
                                 A = res.AsoilV
                             D_djk,D_mjk,D_etkj,Zwk,Zk,Qetj = 'D_d'+str(j)+str(k),'D_m'+str(j)+str(k),'D_et'+str(k)+str(j),\
                             'Zw_'+str(k),'Z'+str(k),'Qet'+str(j)
@@ -527,9 +550,9 @@ class SubsurfaceSinks(FugModel):
                         elif k in ['subsoil','topsoil']:#Subsoil - topsoil and vice-versa
                             D_djk,D_skj,Zwk = 'D_d'+str(j)+str(k),'D_s'+str(k)+str(j),\
                             'Zw_'+str(k)                          
-                            res.loc[mask,D_djk] = 1/(Y_subsoil/(res.AsoilV*res.Deff_water*res.Zw_water)\
-                                   +Y_topsoil/(res.AsoilV*res.Deff_topsoil*res.Zwtopsoil)) #Diffusion - both ways
-                            res.loc[mask,D_skj] = params.val.U42*res.AsoilV*res.Zq4 #Particle settling - only from top to subsoil
+                            res.loc[mask,D_djk] = 1/(res.Y_subsoil/(res.AsoilV*res.Deff_water*res.Zw_water)\
+                                   +res.Y_topsoil/(res.AsoilV*res.Deff_topsoil*res.Zw_topsoil)) #Diffusion - both ways
+                            res.loc[mask,D_skj] = params.val.U42*res.AsoilV*res.Zq_topsoil #Particle settling - only from top to subsoil
                             if j == 'subsoil':
                                 res.loc[mask,D_jk] = res.loc[mask,D_djk] #sub- to topsoil
                                 res.loc[mask,D_kj] = res.loc[mask,D_djk] + res.loc[mask,D_skj] #top- to subsoil  
@@ -566,31 +589,36 @@ class SubsurfaceSinks(FugModel):
                             res.loc[mask,D_kj] += res.loc[mask,D_rdkj]
                         elif k in ['shoots']:
                             if 'topsoil' in numc and j =='subsoil':
-                                pass
+                                res.loc[mask,D_jk] = 0
+                                res.loc[mask,D_kj] = 0
                             else:
-                                rainrate = pd.DataFrame(np.array(timeseries.loc[(slice(None),'pond'),'QET']),index = timeseries.index.levels[0]).reindex(res.index,level=1).loc[:,0]
                                 #Canopy drip 
-                                res.loc[res.dm==False,'D_cd'] = res.A_shootair * rainrate*(params.val.Ifw - params.val.Ilw)\
+                                if locsumm.loc['shoots','Discrete'] == 0:
+                                    masksh = res.dm==False
+                                else:
+                                    masksh = res.dm
+                                res.loc[masksh,'D_cd'] = res.A_shootair * rainrate*(params.val.Ifw - params.val.Ilw)\
                                        *params.val.lamb * res.Zshoots  
                                 #Wax erosion
-                                res.loc[res.dm==False,'D_we'] = res.A_shootair * params.val.kwe * res.Zshoots   
+                                res.loc[masksh,'D_we'] = res.A_shootair * params.val.kwe * res.Zshoots   
                                 #litterfall & plant death?
-                                res.loc[res.dm==False,'D_lf'] = res.Vshoots * res.Zshoots   * params.val.Rlf    
-                            #Overall D Values
-                            res.loc[mask,D_jk] = 0
-                            res.loc[res.dm==False,D_kj] = res.D_cd + res.D_we + res.D_lf
+                                res.loc[masksh,'D_lf'] = res.Vshoots * res.Zshoots   * params.val.Rlf    
+                                #Overall D Values
+                                res.loc[mask,D_jk] = 0
+                                res.loc[masksh,D_kj] = res.D_cd + res.D_we + res.D_lf
                         elif k in ['air']:
                             if 'topsoil' in numc and j =='subsoil':
-                                pass
+                                res.loc[mask,D_jk] = 0
+                                res.loc[mask,D_kj] = 0
                             else:
-                                if j == 'subsoil':
+                                if ('topsoil' not in numc) and (j == 'subsoil'):
                                     y = np.array(res.iloc[0].x/2) #Half the top cell.
                                     Bea = np.array(res.loc[(res.x == min(res.x)),'Bea_subsoil'])
                                     #For the BC, only the top of the soil will interact with the air
                                     masks = (res.x == min(res.x)) 
                                     maska = res.dm==False
                                 else:
-                                    y = Y_topsoil
+                                    y = res.Y_topsoil
                                     Bea= res.Bea_topsoil
                                     #***CHECK BEFORE USE***
                                     masks = res.dm
@@ -602,14 +630,13 @@ class SubsurfaceSinks(FugModel):
                                        +y/(res[masks].Asoilair*Bea*np.array(res.Zair[maska])+\
                                     res[masks].Asoilair*np.array(res.loc[masks,Deff_j])*np.array(res.loc[masks,Zw_j]))) #Dry diffusion
                                 res.loc[maska,D_djk] = np.array(res.loc[masks,D_djk])
-                                #OK, now we need to bring the rain rate in here. This is somewhat janky but it work, I couldn't get the reindex to work otherwise
-                                rainrate = pd.DataFrame(np.array(timeseries.loc[(slice(None),'pond'),'QET']),index = timeseries.index.levels[0])
+        
                                 #From air to top cell of soil. 
-                                res.loc[maska,'D_wdairsoil'] = res[maska].Asoilair*np.array(res.loc[maska,Zw_k])*rainrate.reindex(res.index,level=1).loc[:,0]\
-                                    *(1-params.val.Ifw) #Wet gas deposion
+                                #res.loc[maska,'D_wdairsoil'] = res[maska].Asoilair*np.array(res.loc[maska,Zw_k])*rainrate.reindex(res.index,level=1).loc[:,0]*(1-params.val.Ifw) #Wet gas deposion
+                                res.loc[maska,'D_wdairsoil'] = res[maska].Asoilair*np.array(res.loc[maska,Zw_k])*rainrate*(1-params.val.Ifw) #Wet gas deposion
                                 res.loc[masks,'D_wdairsoil'] = 0
                                 res.loc[maska,'D_qairsoil'] = res[res.dm==False].Asoilair * res.loc[maska,Zq_k] \
-                                    *rainrate.reindex(res.index,level=1).loc[:,0]*res[maska].fpartair*params.val.Q*(1-params.val.Ifw)  #Wet dep of aerosol
+                                    *rainrate*res[maska].fpartair*params.val.Q*(1-params.val.Ifw)  #Wet dep of aerosol
                                 res.loc[masks,'D_qairsoil'] = 0
                                 res.loc[maska,'D_dairsoil'] = res[maska].Asoilair * res.loc[maska,Zq_k]\
                                     *  params.val.Up * res[maska].fpartair* (1-Ifd) #dry dep of aerosol
@@ -689,16 +716,22 @@ class SubsurfaceSinks(FugModel):
                             res.loc[mask,D_jk] = res.loc[:,'D_xc']
                             res.loc[mask,D_kj] = 0
                         elif (j in ['rootcyl']) & (k in ['shoots']):
-                            #Cylinder goes to shoots!
+                            #Cylinder goes to shoots
                             Zw_j = 'Zw_'+str(j)
                             #pdb.set_trace()
                             res.loc[mask,'D_csh'] = res.Qetplant*res.loc[:,Zw_j]
-                            #Flux up the central cylinder. Stays in same compartment but goes vertically up discretized units.
-                            res.loc[(mask) & (res.x != min(res.x)),'D_'+str(jind)+str(jind)] += res.loc[mask,'D_csh']
-                            res.loc[(mask) & (res.x != min(res.x)),Dtj] += res.loc[mask,'D_csh'] 
-                            #Overall D values - only one way, only from top cell.
-                            res.loc[(res.x == min(res.x)) ,D_jk] = res.loc[:,'D_csh']
-                            res.loc[mask,D_kj] = 0                             
+                            #If the system flows vertically - flux goes up discretized units
+                            if params.val.vert_flow is True:
+                                #Flux up the central cylinder. Stays in same compartment but goes vertically up discretized units.
+                                res.loc[(mask) & (res.x != min(res.x)),'D_'+str(jind)+str(jind)] += res.loc[mask,'D_csh']
+                                res.loc[(mask) & (res.x != min(res.x)),Dtj] += res.loc[mask,'D_csh'] 
+                                #Overall D values - only one way, only from top cell.
+                                res.loc[(res.x == min(res.x)) ,D_jk] = res.loc[:,'D_csh']
+                                res.loc[mask,D_kj] = 0               
+                            else:
+                                res.loc[mask,D_jk] = res.loc[:,'D_csh'] #From central cylinder to shoots
+                                res.loc[mask,D_kj] = 0
+                                          
                         else: #Other compartments Djk = Dkj = 0
                             res.loc[mask,D_jk] = 0
                     #Add D_jk to DTj for each compartment.
@@ -723,11 +756,9 @@ class SubsurfaceSinks(FugModel):
                             Zn_j,Zw_k,Zq_k = 'Zn_'+str(j),'Zw_'+str(k),'Zq_'+str(k)
                             #Volatilization to air, only neutral species. Ashoots is the interfacial area
                             res.loc[mask,'D_dshootsair'] = res.kvv*res.A_shootair*res.loc[:,Zn_j]
-                            #OK, now we need to bring the rain rate in here. This is somewhat janky but it work, I couldn't get the reindex to work otherwise
-                            rainrate = pd.DataFrame(np.array(timeseries.loc[(slice(None),'pond'),'QET']),index = timeseries.index.levels[0])
-                            res.loc[mask,'D_rv'] = res.A_shootair * res.loc[:,Zw_k]*rainrate.reindex(res.index,level=1).loc[:,0]\
-                                * params.val.Ifw  #Wet dep of gas to shoots
-                            res.loc[mask,'D_qv'] = res.A_shootair * res.loc[:,Zq_k]*rainrate.reindex(res.index,level=1).loc[:,0]\
+                            #res.loc[mask,'D_rv'] = res.A_shootair * res.loc[:,Zw_k]*rainrate.reindex(res.index,level=1).loc[:,0]* params.val.Ifw  #Wet dep of gas to shoots
+                            res.loc[mask,'D_rv'] = res.A_shootair * res.loc[:,Zw_k]*rainrate* params.val.Ifw  #Wet dep of gas to shoots
+                            res.loc[mask,'D_qv'] = res.A_shootair * res.loc[:,Zq_k]*rainrate\
                                 * params.val.Q * params.val.Ifw #Wet dep of aerosol
                             res.loc[mask,'D_dv'] = res.A_shootair * res.loc[:,Zq_k] * params.val.Up *Ifd  #dry dep of aerosol
                             #Overall D values- only diffusion from shoots to air
@@ -761,8 +792,7 @@ class SubsurfaceSinks(FugModel):
                                    +y/(Apondair[mask]*res.loc[mask,'D_air']*res[mask].Zair+\
                                 Apondair[mask]*res.loc[mask,'Deff_pond']*res.loc[mask,Zw_k])) #Dry diffusion
                             res.loc[np.isnan(res.D_dairpond),'D_dairpond'] = 0 #Set NaNs to zero
-                            #OK, now we need to bring the rain rate in here. This is somewhat janky but it work, I couldn't get the reindex to work otherwise
-                            rainrate = pd.DataFrame(np.array(timeseries.loc[(slice(None),'pond'),'QET']),index = timeseries.index.levels[0])
+
                             res.loc[mask,'D_rp'] = Apondair * res.loc[:,Zw_j]*rainrate.reindex(res.index,level=1).loc[:,0]\
                                 * params.val.Ifw  #Wet dep of gas to pond
                             res.loc[mask,'D_qp'] = Apondair * res.loc[:,Zq_j]*rainrate.reindex(res.index,level=1).loc[:,0]\
@@ -1023,7 +1053,8 @@ class SubsurfaceSinks(FugModel):
         except IndexError:  #Runs just the input_calcs part
             input_calcs = self.input_calc(locsumm,chemsumm,params,pp,numc,input_calcs)
         #Now, this will be our outputs dataframe
-        res = input_calcs.copy(deep=True)
+        #res = input_calcs.copy(deep=True)
+        res = input_calcs
         #If we want to run the code in segments, we just need one previous timestep. 
         #Now, we can add the influent concentrations as the upstream boundary condition
         #Assuming chemical concentration in g/m³ activity [mol/m³] = C/Z/molar mass,
@@ -1036,6 +1067,8 @@ class SubsurfaceSinks(FugModel):
                 timeseries.loc[:,chem_Min].reindex(input_calcs.index, level = 1)/chemsumm.MolMass[chem] #mol
                 res.loc[(chem,slice(None),slice(None)),'bc_us'] = 0
         else:
+            #Initialize mass in as zero - will be calcualated from upstream BC
+            res.loc[:,'Min'] = 0
             for chem in chemsumm.index:
                 chem_Cin = str(chem) + '_Cin'
                 res.loc[(chem,slice(None),slice(None)),'Cin'] = \
@@ -1045,10 +1078,16 @@ class SubsurfaceSinks(FugModel):
         
         #ntimes = len(timeseries.index)
         #Update params on the outside of the timeloop
-        params.loc['L','val'] = locsumm.Depth.subsoil + locsumm.Depth.topsoil
+        if params.val.vert_flow is True:
+            params.loc['L','val'] = locsumm.Depth.subsoil + locsumm.Depth.topsoil
+        else:
+            params.loc['L','val'] = locsumm.Length.water
         check = np.zeros([len(timeseries.index),len(chemsumm.index)])
-        #Initialize total mass
+        #Initialize total mass and minp, minq
         res.loc[:,'M_tot'] = 0
+        
+        #Give number of discretized compartments to params
+        params.loc['numc_disc','val'] = locsumm.loc[:,'Discrete'].sum()
         #lexsort outside the timeloop for better performance
         res = res.sort_index()
         for t in res.index.levels[1]: #Just in case index doesn't start at zero
@@ -1068,7 +1107,8 @@ class SubsurfaceSinks(FugModel):
                 for j in range(0,len(numc)):
                     a_val = 'a'+str(j+1) + '_t'
                     try: #If there is a last step, use that as the a_t values
-                        res.loc[(slice(None),t,slice(None)),a_val] = last_step.loc[(slice(None),t,slice(None)),a_val]
+                        #res.loc[(slice(None),t,slice(None)),a_val] = last_step.loc[(slice(None),t,slice(None)),a_val]
+                        res.loc[(slice(None),t,slice(None)),a_val] = last_step.iloc[:,j].reindex(res.index,level=0)
                     except AttributeError:
                         res.loc[(slice(None),t,slice(None)),a_val] = 0 #1#Can make different for the different compartments
                     dt = timeseries.time[1]-timeseries.time[0]
@@ -1103,8 +1143,13 @@ class SubsurfaceSinks(FugModel):
                 res.loc[(slice(None),t,slice(None)),M_val] = res_t.loc[(slice(None),t,slice(None)),M_val]
                 res.loc[(slice(None),t,slice(None)),'M_tot'] += res.loc[(slice(None),t,slice(None)),M_val]
             #Also put the water and soil inputs in.
-            res.loc[(slice(None),t,slice(None)),'Mqin'] = res_t.loc[(slice(None),t,slice(None)),'Mqin']
-            res.loc[(slice(None),t,slice(None)),'Min_p'] = res_t.loc[(slice(None),t,slice(None)),'Min_p']
+            if params.val.vert_flow == True:
+                res.loc[(slice(None),t,slice(None)),'Mqin'] = res_t.loc[(slice(None),t,slice(None)),'Mqin']
+                res.loc[(slice(None),t,slice(None)),'Min_p'] = res_t.loc[(slice(None),t,slice(None)),'Min_p']
+            else: #Set upstream mass in here
+                res.loc[(slice(None),t,slice(None)),'Min'] = res_t.loc[(slice(None),t,slice(None)),'Min']
+                res.loc[(slice(None),t,slice(None)),'Mqin'] = 0
+                res.loc[(slice(None),t,slice(None)),'Min_p'] = res.loc[(slice(None),t,slice(None)),'Min']
 
             #mass = res.loc[(slice(None),t,slice(None)),'a1_t1']*res.loc[(slice(None),t,slice(None)),'Z1']\
             #*res.loc[(slice(None),t,slice(None)),'V1'] + res.loc[(slice(None),t,slice(None)),'a2_t1']\
@@ -1234,7 +1279,7 @@ class SubsurfaceSinks(FugModel):
                     pass 
                 elif k != j:
                     Njk,Nkj,Mjk,Mkj,Mnetjk = 'N' +str(j)+str(k),'N' +str(k)+str(j),'M'+str(j)+str(k),'M'+str(k)+str(j),'Mnet'+str(j)+str(k)
-                    #Mass into each compartment will berecorded as that compartment's Mjk
+                    #Mass into each compartment will be recorded as that compartment's Mjk
                     mbal.loc[:,Mkj] = (mass_flux.dt*mass_flux.loc[:,Nkj]).groupby(level=[0,1]).sum()/divisor
                     mbal.loc[:,Minj] += mbal.loc[:,Mkj]
                     #Mass out per time step. 
@@ -1242,15 +1287,15 @@ class SubsurfaceSinks(FugModel):
                     mbal.loc[:,Moutj] += mbal.loc[:,Mjk]
                     mbal.loc[:,Mnetjk] = mbal.loc[:,Mjk] - mbal.loc[:,Mkj]
             #Mass balance for each compartment            
-            #For water and soil, we also have mass coming in from the pond zone
-            if j in 'water':
+            #For water and soil, we may also have mass coming in from the pond zone
+            if (j in 'water') and ('pond' in numc):
                 mbal.loc[:,'Minp']=res_time.Min_p.groupby(level=[0,1]).sum()/divisor
                 mbal.loc[:,Minj]+= mbal.loc[:,'Minp']
                 mbal.loc[:,'Mnetwaterpond'] += -mbal.loc[:,'Minp'] #Negative as from pond to water.
                 #For water also need to account for advection out of the system.
                 mbal.loc[:,Moutj]+=mbal.loc[:,'Meff']+mbal.loc[:,'Mexf']
                 
-            elif j in 'subsoil':
+            elif j in 'subsoil'and ('pond' in numc):
                 mbal.loc[:,'Minq'] = res_time.Mqin.groupby(level=[0,1]).sum()/divisor
                 mbal.loc[:,Minj] += mbal.loc[:,'Minq']
                 mbal.loc[:,'Mnetsubsoilpond'] += -mbal.loc[:,'Minq'] #Negative as from pond to water
@@ -1261,7 +1306,7 @@ class SubsurfaceSinks(FugModel):
                 mbal.loc[:,Mgj] = (mass_flux.dt*mass_flux.loc[:,Nrg_j]).groupby(level=[0,1]).sum()/divisor
                 mbal.loc[:,Moutj] += mbal.loc[:,Mgj]
                 mbal.loc[:,'Mout'] += (mass_flux.dt*mass_flux.loc[:,Nrg_j]).groupby(level=[0,1]).sum().groupby(level=0).cumsum()
-            #If normalized, Mj = absolute mass in compartment. Otherwise, percentage of mass in compartment at a time step (distribution)
+            #If not normalized, Mj = absolute mass in compartment. Otherwise, percentage of mass in compartment at a time step (distribution)
             if normalized == True:
                 mbal.loc[:,Mj] = res_time.loc[:,Mjind].groupby(level=[0,1]).sum()/divisor
             else:
@@ -1290,7 +1335,7 @@ class SubsurfaceSinks(FugModel):
             normalized (bool, optional) = Normalize the mass transfers to the total mass that has entered the system.
                 Note that this will only normalize certain outputs
         """  
-        #pdb.set_trace()
+        pdb.set_trace()
         #Set up mbal. Need to run as non-normalized in order for normalization here to work. Might fix this later, for now it is good enough
         try:
             mbal = mass_balance
@@ -1306,8 +1351,12 @@ class SubsurfaceSinks(FugModel):
             divisor = mbal.Min+mbal.loc[(slice(None),mbal.index.levels[1][0]),'Mtot'].reindex(mbal.index,method ='ffill')
         else:
             divisor = 1    
-        mbal_cum =  pd.concat([mbal_cum,mbal.loc[:,['Meff','Mexf','Minp','Minq']].groupby(level=0).cumsum()],axis=1)
-        mbal_cum.loc[:,['Meff','Mexf','Mtot','Minp','Minq']] =  mbal_cum.loc[:,['Meff','Mexf','Mtot','Minp','Minq']].mul(1/divisor,axis="index")
+        try:
+            mbal_cum =  pd.concat([mbal_cum,mbal.loc[:,['Meff','Mexf','Minp','Minq']].groupby(level=0).cumsum()],axis=1)
+            mbal_cum.loc[:,['Meff','Mexf','Mtot','Minp','Minq']] =  mbal_cum.loc[:,['Meff','Mexf','Mtot','Minp','Minq']].mul(1/divisor,axis="index")
+        except KeyError:
+            mbal_cum =  pd.concat([mbal_cum,mbal.loc[:,['Meff','Mexf']].groupby(level=0).cumsum()],axis=1)
+            mbal_cum.loc[:,['Meff','Mexf','Mtot']] =  mbal_cum.loc[:,['Meff','Mexf','Mtot']].mul(1/divisor,axis="index")
         for j in numc:#j is compartment mass is leaving
             Mj,Madvj,Mrj= 'M'+str(j),'Madv'+str(j),'Mr'+str(j)
             #Mass is not cumulative.
@@ -1333,7 +1382,7 @@ class SubsurfaceSinks(FugModel):
         return mbal_cum
     
     def conc_out(self,numc,timeseries,chemsumm,res_time,mass_flux=None):
-        """ This function calculates modeled concentrations at the outlet for all chemicals present.
+        """ This function calculates modeled concentrations at the outlet for all chemicals present. All values g/m³
         """
         #pdb.set_trace()
         try:
@@ -1344,16 +1393,34 @@ class SubsurfaceSinks(FugModel):
         #pdb.set_trace()
         Couts = pd.DataFrame(np.array(res_time.loc[(min(res_time.index.levels[0]),slice(None),numx-1),'time']),
                                           index = res_time.index.levels[1],columns=['time'])
-        Couts.loc[:,'Qout_meas'] = timeseries.loc[:,'Qout_meas']
-        Couts.loc[:,'Qout_est'] = np.array(res_time.loc[(min(res_time.index.levels[0]),slice(None),numx-1),'Qout'])
+        try: #If there are measured and estimated flows, bring both in
+            Couts.loc[:,'Qout_meas'] = timeseries.loc[:,'Qout_meas']
+            Couts.loc[:,'Qout'] = np.array(res_time.loc[(min(res_time.index.levels[0]),slice(None),numx-1),'Qout'])
+        except KeyError:
+            Couts.loc[:,'Qout'] = timeseries.loc[:,'Qout']
         for chem in mass_flux.index.levels[0]:
-            Couts.loc[:,chem+'_Coutmeas'] = timeseries.loc[:,chem+'_Coutmeas']
+            try: #If there are measurements
+                Couts.loc[:,chem+'_Coutmeas'] = timeseries.loc[:,chem+'_Coutmeas']
+            except KeyError:
+                pass
             #Concentration = mass flux/Q*MW
             Couts.loc[:,chem+'_Coutest'] = np.array(mass_flux.loc[(chem,slice(None),slice(None)),'N_effluent'].groupby(level=1).sum())\
-                                            /np.array(Couts.loc[:,'Qout_est'])*np.array(chemsumm.loc[chem,'MolMass'])
+                                            /np.array(Couts.loc[:,'Qout'])*np.array(chemsumm.loc[chem,'MolMass'])
             Couts.loc[np.isnan(Couts.loc[:,chem+'_Coutest']),chem+'_Coutest'] = 0.                      
         
         return Couts
+    
+    def concentrations(self,numc,res_time):
+        """This method calculates modeled concentrations within the system.
+        
+        """
+        #pdb.set_trace()
+        concentrations = pd.DataFrame(res_time.loc[res_time.time>=0,['time','x']])
+        for jind,j in enumerate(numc):
+            jind = jind+1
+            aval,Zval,colname = 'a'+str(jind) + '_t1','Z'+str(jind),j+'_conc'
+            concentrations.loc[:,colname] = res_time.loc[:,aval]*res_time.loc[:,Zval]
+        return concentrations
     
     def mass_distribution(self,numc,res_time,timeseries,chemsumm,normalized = 'compartment'):
         """ 
@@ -1386,7 +1453,7 @@ class SubsurfaceSinks(FugModel):
         return mdist
     
             
-    def model_fig(self,numc,mass_balance,time=None,compound=None,figname='20210217_BC_Model_Figure_rgb.tif',dpi=100,fontsize=8,figheight=6):
+    def model_fig(self,numc,mass_balance,dM_locs,M_locs,time=None,compound=None,figname=None,dpi=100,fontsize=8,figheight=6):
         """ 
         Show modeled fluxes and mass distributions on a figure. 
         Attributes:
@@ -1413,34 +1480,7 @@ class SubsurfaceSinks(FugModel):
         fig, ax = plt.subplots(figsize=figsize, dpi = dpi)
         ax.grid(False)
         plt.axis('off')    
-        #Define the locations where the mass transfers (g) will be placed.
-        '''
-        dM_locs = {'Meff':(2500,3650),'Min':(300,3420),'Mexf':(2300,3420),'Mrwater':(2120,2350),
-                  'Mrsubsoil':(2550,2480),'Mrrootbody':(700,1050),'Mrrootxylem':(2550,1400),
-                  'Mrrootcyl':(300,700),'Mrshoots':(1780,1160),'Mrair':(2110,1300),
-                  'Mrpond':(2350,1180),'Mnetwatersubsoil':(900,3350),'Mnetwaterpond':(200,3100),
-                  'Mnetsubsoilrootbody':(1980,2020),'Mnetsubsoilshoots':(2040,1780),
-                  'Mnetsubsoilair':(200,2200),'Mnetrootbodyrootxylem':(2480,2060),
-                  'Mnetrootxylemrootcyl':(2580,1860),'Mnetrootcylshoots':(1470,2410),
-                  'Mnetshootsair':(800,2325),'Mnetairpond':(700,1600),'Madvair':(700,1600),'Madvpond':(2500,3350)}
-
-        #Location of the massess
-        M_locs = {'Mwater':(1870,3460),'Msubsoil':(1870,3280),'Mrootbody':(2300,330),
-                'Mrootxylem':(2300,500),'Mrootcyl':(2300,690),'Mshoots':(2300,180),
-                'Mair':(2410,2820),'Mpond':(2350,690)}     
-        '''        
-        dM_locs = {'Meff':(0.835,0.215),'Min':(0.013,0.490),'Mexf':(0.581,0.235),'Mrwater':(0.850,0.360),
-                  'Mrsubsoil':(0.82,0.280),'Mrrootbody':(0.560,0.780),'Mrrootxylem':(0.73,0.835),
-                  'Mrrootcyl':(0.835,0.775),'Mrshoots':(0.135,0.760),'Mrair':(0.025,0.830),
-                  'Mrpond':(0.794,0.560),'Mnetwatersubsoil':(0.046,0.295),'Mnetwaterpond':(0.18,0.360),
-                  'Mnetsubsoilrootbody':(0.679,0.664),'Mnetsubsoilshoots':(0.260,0.387),
-                  'Mnetsubsoilair':(0.636,0.545),'Mnetsubsoilpond':(0.013,0.390),'Mnetrootbodyrootxylem':(0.835,0.635),
-                  'Mnetrootxylemrootcyl':(0.875,0.680),'Mnetrootcylshoots':(0.50,0.443),
-                  'Mnetshootsair':(0.489,0.585),'Mnetairpond':(0.090,0.545),'Madvair':(0.828,0.885),'Madvpond':(0.850,0.475)}
-        #Location of the massess
-        M_locs = {'Mwater':(0.075,0.242),'Msubsoil':(0.075,0.217),'Mrootbody':(0.530,0.930),
-                'Mrootxylem':(0.747,0.930),'Mrootcyl':(0.747,0.961),'Mshoots':(0.530,0.961),
-                'Mair':(0.095,0.955),'Mpond':(0.739,0.453)}             
+        #Define the locations where the mass transfers (g) will be placed.            
         for j in numc:#j is compartment mass is leaving
             Mj,Mrj = 'M'+str(j),'Mr'+str(j) 
             pass

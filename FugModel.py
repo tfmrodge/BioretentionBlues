@@ -104,8 +104,11 @@ class FugModel(metaclass=ABCMeta):
         inp_val = np.zeros([numchems,numc])
         for j in range(numc): #compartment j, row index
             #Define RHS input for every compartment j
-            inp_name = 'inp_' + str(j + 1) #must have an input for every compartment, even if it is zero
-            inp_val[:,j] = -ic.loc[:,inp_name]
+            inp_name = 'inp_' + str(j + 1) 
+            try:
+                inp_val[:,j] = -ic.loc[:,inp_name]
+            except KeyError: #If input not given, assume zero
+                inp_val[:,j] = 0
             for k in range(numc): #compartment k, column index
                 if j == k:
                     DT = 'DT' + str(j + 1)
@@ -268,10 +271,13 @@ class FugModel(metaclass=ABCMeta):
         res.loc[:,'dmn'] = False
         res.loc[:,'dmd'] = False
         res.loc[(slice(None),slice(None),0),'dm0'] = True #0th discretized cell
-        res.loc[(slice(None),slice(None),slice(numx-2,numx-2)),'dmn'] = True #Last discretized cell excluding drain
-        res.loc[(slice(None),slice(None),slice(numx-1,numx-1)),'dmd'] = True #Drainage cell
+        if params.val.vert_flow is True:
+            res.loc[(slice(None),slice(None),slice(numx-2,numx-2)),'dmn'] = True #Last discretized cell excluding drain
+            res.loc[(slice(None),slice(None),slice(numx-1,numx-1)),'dmd'] = True #Drainage cell
+        else:
+            res.loc[(slice(None),slice(None),slice(numx-1,numx-1)),'dmn'] = True #Last discretized cell 
         res.loc[:,'ndm'] = (res.dm==False) #Drainage cell
-        #We are going to declare the drainage cell non-discretized for the purposes of the ADRE - advection only into it
+        #We are going to declare the drainage cell non-discretized for the purposes of the ADRE - advection only into it        
         res.loc[res.dmd==True,'dm'] = False
         if 'dx' not in res.columns: #
             res.loc[:,'dx'] = res.groupby(level = 0)['x'].diff()
@@ -426,6 +432,11 @@ class FugModel(metaclass=ABCMeta):
                 res.loc[(ii,slice(None),res.dm),'M_xf'] = f1(res.loc[(ii,slice(None),res.dm),'xf']) #Mass at xf, used to determine advection out of the system
         
         #US boundary conditions
+        #For non-pulse systems, define mass flowing in. Some will be lost at the US BC to diffusion.
+        if params.val.Pulse is False:
+            M_t =  params.val.Qin*res.loc[(slice(None),slice(None),res.dm0),'bc_us']\
+            *dt*res.loc[(slice(None),slice(None),res.dm0),'Z1']
+            res.loc[res.dm0,'Min'] = M_t
         #Case 1 - both xb and xf are outside the domain. 
         #All mass (moles) comes in at the influent activity & Z value (set to the first cell)
         #pdb.set_trace()
@@ -436,7 +447,7 @@ class FugModel(metaclass=ABCMeta):
         #pdb.set_trace()
         if 'pond' in numc: 
             ponda_t, inp_val = 'a' + str(numc.index('pond')+1) +"_t", 'inp_' +str(numc.index('pond')+1)
-            #The ponding zone is a single compartment, so gets the entire Min in one go.
+            #The ponding zone is a single compartment, so gets the entire Min sin one go.
             #So we add apond_t and the incoming mass
             pondastar = np.array(np.array(res.loc[res.ndm,ponda_t]*res.loc[res.ndm,'Zpond']*(res.Vpond[-1] + res.Qin[-1]*dt)\
                                  +np.array(res.loc[(slice(None),slice(None),0),'Min']))\
@@ -469,9 +480,11 @@ class FugModel(metaclass=ABCMeta):
                 relerr = err/(pondastar*res.loc[res.ndm,'Zpond']*np.array(res.Vpond[-1] + res.Qin[-1]*dt))
                 if (np.sum(res.loc[res.ndm,ponda_t]<0)>0) & (np.sum(relerr<1/1000000)!=0):
                     res.loc[res.ndm,ponda_t] = 0
-        else:#Otherwise initialize these.
+        elif params.val.Pulse == True:#Otherwise initialize these.
             res.loc[:,'Mqin'] = 0
             res.loc[:,'Min_p'] = res.loc[:,'Min']
+        else:
+            pass
 
         if sum(mask) != 0:
             #res[mask].groupby(level = 0)['del_0'].sum()
@@ -503,8 +516,9 @@ class FugModel(metaclass=ABCMeta):
             else:
                 M_t =  params.val.Qin*res.loc[(slice(None),slice(None),res.dm0),'bc_us']\
                 *dt*res.loc[(slice(None),slice(None),res.dm0),'Z1'] - np.array(M_us)
+        
             #M_t =  res.bc_us[mask]*params.val.Qin*np.array(res.Z1[slice(None),0])*np.array((dt-delf_test1.shift(1)[mask]))
-            res.loc[mask,'M_star'] = np.array(res[mask].M_xf + M_t)
+            res.loc[mask,'M_star'] = np.array(res[mask].M_xf + np.array(M_t))
             res.loc[mask,'inp_mass1'] = np.array(M_t) #Mass (moles) from outside system to the water compartment)
         #Case 3 - too close to origin for cubic interpolation, so we will use linear interpolation
         #Not always going to occur
@@ -513,9 +527,10 @@ class FugModel(metaclass=ABCMeta):
             res.loc[mask,'M_star'] = slope.reindex(res.loc[mask,'M_star'].index,method = 'ffill') * (res.xf[mask] - res.xb[mask])
         #Define advective flow for the drainage cell
         #pdb.set_trace()
-        res.loc[res.dmd,'M_star']  = res.loc[res.dmd,'M_i'] \
-        +np.array(res.loc[res.dmn,'M_n'] - res.loc[res.dmn,'M_xf'])\
-        - np.array(dt*(res.loc[res.dmd,'a1_t']*res.loc[res.dmd,'Z1']*res.loc[res.dmd,'Qout']))#This line is advective mass out. -explicit.
+        if params.val.vert_flow is True:
+            res.loc[res.dmd,'M_star']  = res.loc[res.dmd,'M_i'] \
+            +np.array(res.loc[res.dmn,'M_n'] - res.loc[res.dmn,'M_xf'])\
+            - np.array(dt*(res.loc[res.dmd,'a1_t']*res.loc[res.dmd,'Z1']*res.loc[res.dmd,'Qout']))#This line is advective mass out. -explicit.
         #res.loc[:,'M_star'].sum()/(res.loc[:,'M_i'].sum()-np.array(dt*(res.loc[res.dmd,'a1_t']*res.loc[res.dmd,'Z1']*res.loc[res.dmd,'Qout']))) #Code to check if the mass from the advection step balances
         #- np.array(dt*(res.loc[res.dmd,'a1_t']*res.loc[res.dmd,'D_waterexf']))
         #Divide out to get back to activity/fugacity from advection
@@ -537,21 +552,25 @@ class FugModel(metaclass=ABCMeta):
         #the back (b) term acting on x(i-1)
         res.loc[:,'b'] = 2*res.P*res.V1_b*res.Z1_b*res.disp_b/(res.dx + res.groupby(level = 0)['dx'].shift(1))
         #Set drainage zone to zero - no back diffusion.
-        res.loc[res.dmd,'b'] = 0
+        if params.val.vert_flow is True:
+            res.loc[res.dmd,'b'] = 0
         #To deal with the upstream boundary condition:
         if params.val.Pulse == False: #For continuous influx/flux allowed across U/S boundary, we can simply set dx(i-1) = dx so that:
-            res.loc[(slice(None),slice(None),res.dm0),'b'] = 2*res.P*res.V1_b*res.Z1_b*res.disp_b/(res.dx)
+            #20210330 - assume no flux upstream as well for the Oro Loma system.
+            res.loc[(slice(None),slice(None),res.dm0),'b'] = 0#2*res.P*res.V1_b*res.Z1_b*res.disp_b/(res.dx)
         else:#For a pulse of Min we assume that none advects upstream, zero flux BC
             res.loc[(slice(None),slice(None),res.dm0),'b'] = 0
         #forward (f) term acting on x(i+1)
         res.loc[:,'f'] = 2*res.P*res.V1_f*res.Z1_f*res.disp_f/(res.dx + res.groupby(level = 0)['dx'].shift(-1))
         res.loc[(slice(None),slice(None),res.dmn),'f'] = 0 #No diffusion across downstream boundary
-        res.loc[res.dmd,'f'] = 0 #Or out of drainage zone
+        if params.val.vert_flow is True:
+            res.loc[res.dmd,'f'] = 0 #Or out of drainage zone
         #Middle (m) term acting on x(i) - this will be subracted in the matrix (-m*ai)
         #Upstream and downstream BCs have been dealt with in the b and f terms
         res.loc[:,'m'] = res.f+res.b+dt*res.DT1+res.V1*res.Z1
         #For the drainage zone
-        res.loc[res.dmd,'m'] = dt*res.DT1+res.V1*res.Z1#+dt*(res.loc[res.dmd,'Z1']*res.loc[res.dmd,'Qout'])
+        if params.val.vert_flow is True:
+            res.loc[res.dmd,'m'] = dt*res.DT1+res.V1*res.Z1#+dt*(res.loc[res.dmd,'Z1']*res.loc[res.dmd,'Qout'])
         #res.loc[res.dmd,'m'] = 0 #Turn off drainage other processes
         #Now we are going to set res.dm back to including the drainage cell.
         res.loc[:,'dm'] = res.ndm == False
@@ -563,7 +582,7 @@ class FugModel(metaclass=ABCMeta):
         #Initialize transport matrix and RHS vector (inp)
         #pdb.set_trace()
         numcells = len(res.x) #This includes the non-discretized cell
-        numc_disc = 5 #Number of non-discretized cells
+        numc_disc = int(params.val.numc_disc) #Number of discretized cells
         numc_bulk = len(numc) - numc_disc
         mat = np.zeros([numchems,numx*numc_disc+numc_bulk,numx*numc_disc+numc_bulk])
         inp = np.zeros([numchems,numx*numc_disc+numc_bulk])
@@ -604,8 +623,8 @@ class FugModel(metaclass=ABCMeta):
                         #Modify DT to reflect the differential equation
                         if np.any(res.loc[res.dm,D_val]< 0):
                             pass
-                        #For the root cylinder, we need to pass the evapotranspiration up the roots.
-                        elif numc[j] in ['rootcyl']:
+                        #For the root cylinder, we need to pass the evapotranspiration up the roots for vertical systems
+                        elif (numc[j] in ['rootcyl']) and (params.val.vert_flow is True):
                             #pdb.set_trace()
                             #pass
                             mat[:,m_vals[0:numx-1]+j,b_vals+j] = dt * np.array(res.loc[res.dm,'D_csh'].shift(-1)).reshape(numchems,numx)[:,slice(0,numx-1)]
@@ -620,10 +639,10 @@ class FugModel(metaclass=ABCMeta):
                     mat[:,m_vals+j,m_vals+k] = dt * np.array(res.loc[res.dm,D_val]).reshape(numchems,numx)
                 else: #Mass transfer from non-discretized cells is only through the top cell (for BCs at least may need to fix later)
                     D_val = 'D_' +str(k+1)+str(j+1)
-                    if np.any(res.loc[res.dm,D_val]< 0):
+                    if numc_disc == 0:#np.any(res.loc[res.dm,D_val]< 0):
                         pass
-                    #Only in top finite volume. Transport from discretized to non-discretized cells
-                    mat[:,j,(numx)*numc_disc+k-numc_disc] = dt * np.array(res.loc[res.ndm,D_val]).reshape(numchems)
+                    else:#Only in top finite volume. Transport from discretized to non-discretized cells
+                        mat[:,j,(numx)*numc_disc+k-numc_disc] = dt * np.array(res.loc[res.ndm,D_val]).reshape(numchems)
                     
         #Upstream boundary - need to add the diffusion term. DS boundary is dealt with already
         if params.val.Pulse == False: #no flux US boundary for mass pulse, 
@@ -631,41 +650,44 @@ class FugModel(metaclass=ABCMeta):
             res.loc[(slice(None),slice(None),res.dm0),'inp_mass1']  += np.array(res.loc[(slice(None),slice(None),res.dm0),'b']*(res.loc[(slice(None),slice(None),res.dm0),'bc_us'] - res.loc[(slice(None),slice(None),res.dm0),'a_star'])) #Mass added from diffusion
         #else:
         #Now, we will to do the undiscretized compartments. Probably could do in the above loop but this makes things a little more clearly separated
-        for j in range(j+1,len(numc)):
-            inp_val = 'inp_' +str(j+1)
-            if inp_val not in res.columns: #If no inputs given assume zero
-                res.loc[:,inp_val] = 0  
-            #Input is the source term less the value at time n
-            a_val, V_val, Z_val = 'a'+str(j+1) + '_t', 'V' + str(j+1), 'Z' + str(j+1)
-            #RHS of the equation is the source plus the mass at time n for compartment j
-            inp[:,numx*numc_disc+j-numc_disc] += - dt * np.array(res.loc[res.ndm,inp_val])\
-                - np.array(res.loc[res.ndm,a_val])\
-                *np.array(res.loc[res.ndm,Z_val])\
-                *np.array(res.loc[res.ndm,V_val])
-            for k in range(0,len(numc)): #k is the column index
-                if (j == k):
-                    D_val, D_valm, V_val, Z_val = 'DT' + str(k+1),'DTm' + str(k+1), 'V' + str(k+1), 'Z' + str(k+1)
-                    #Modify DT to reflect the differential equation
-                    res.loc[res.ndm,D_valm] = dt*res.loc[:,D_val] + res.loc[:,V_val]*res.loc[:,Z_val]
-                    #Diagonal cannot be zero to solve the equation, set to 1. Since the a value here will always be 0 this shouldn't be a problem.
-                    res.loc[res.loc[:,D_valm]==0,D_valm] = 1
-                    mat[:,numx*numc_disc+j-numc_disc,numx*numc_disc+j-numc_disc] = -np.array(res.loc[res.ndm,D_valm]).reshape(numchems)   
-                elif k < numc_disc: #Place the intercompartmental D values for the discretized cells in the leftmost column
-                    D_val = 'D_' +str(k+1)+str(j+1)
-                    if np.any(res.loc[res.dm,D_val]< 0):
-                        pass
-                    mat[:,(numx)*numc_disc+j-numc_disc,k] = dt * np.array(res.loc[res.dm0,D_val]).reshape(numchems)
-                else: #Mass transfer from non-discretized cells 
-                    D_val = 'D_' +str(k+1)+str(j+1)
-                    if np.any(res.loc[res.dm,D_val]< 0):
-                        pass
-                    #Transport between non-discretized cells
-                    mat[:,(numx)*numc_disc+j-numc_disc,(numx)*numc_disc+k-numc_disc] = dt * np.array(res.loc[res.ndm,D_val]).reshape(numchems)
+        if numc_bulk == 0:#Check if any undiscretized compartments exist.
+            pass
+        else:
+            for j in range(j+1,len(numc)):
+                inp_val = 'inp_' +str(j+1)
+                if inp_val not in res.columns: #If no inputs given assume zero
+                    res.loc[:,inp_val] = 0  
+                #Input is the source term less the value at time n
+                a_val, V_val, Z_val = 'a'+str(j+1) + '_t', 'V' + str(j+1), 'Z' + str(j+1)
+                #RHS of the equation is the source plus the mass at time n for compartment j
+                inp[:,numx*numc_disc+j-numc_disc] += - dt * np.array(res.loc[res.ndm,inp_val])\
+                    - np.array(res.loc[res.ndm,a_val])\
+                    *np.array(res.loc[res.ndm,Z_val])\
+                    *np.array(res.loc[res.ndm,V_val])
+                for k in range(0,len(numc)): #k is the column index
+                    if (j == k):
+                        D_val, D_valm, V_val, Z_val = 'DT' + str(k+1),'DTm' + str(k+1), 'V' + str(k+1), 'Z' + str(k+1)
+                        #Modify DT to reflect the differential equation
+                        res.loc[res.ndm,D_valm] = dt*res.loc[:,D_val] + res.loc[:,V_val]*res.loc[:,Z_val]
+                        #Diagonal cannot be zero to solve the equation, set to 1. Since the a value here will always be 0 this shouldn't be a problem.
+                        res.loc[res.loc[:,D_valm]==0,D_valm] = 1
+                        mat[:,numx*numc_disc+j-numc_disc,numx*numc_disc+j-numc_disc] = -np.array(res.loc[res.ndm,D_valm]).reshape(numchems)   
+                    elif k < numc_disc: #Place the intercompartmental D values for the discretized cells in the leftmost column
+                        D_val = 'D_' +str(k+1)+str(j+1)
+                        if np.any(res.loc[res.dm,D_val]< 0):
+                            pass
+                        mat[:,(numx)*numc_disc+j-numc_disc,k] = dt * np.array(res.loc[res.dm0,D_val]).reshape(numchems)
+                    else: #Mass transfer from non-discretized cells 
+                        D_val = 'D_' +str(k+1)+str(j+1)
+                        if np.any(res.loc[res.dm,D_val]< 0):
+                            pass
+                        #Transport between non-discretized cells
+                        mat[:,(numx)*numc_disc+j-numc_disc,(numx)*numc_disc+k-numc_disc] = dt * np.array(res.loc[res.ndm,D_val]).reshape(numchems)
                     
-                
-                
+        
         #Now, we will solve the matrix for each compound simultaneously (each D-matrix and input is stacked by compound)
         matsol = np.linalg.solve(mat,inp)
+        #(matsol < 0).sum()
         #Error checking - Check solutions ~ inputs
         #np.dot(mat[0],matsol[0]) - inp[0]
         #Loop through the compartments and put the output values into our output res dataframe

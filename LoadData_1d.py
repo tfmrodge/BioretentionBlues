@@ -21,7 +21,7 @@ import math
 params = pd.read_excel('params_1d.xlsx',index_col = 0) 
 locsumm = pd.read_excel('Oro_Loma_5cm topsoil.xlsx',index_col = 0) 
 #locsumm = pd.read_excel('Oro_Loma_1.xlsx',index_col = 0) 
-chemsumm = pd.read_excel('OPE_only_CHEMSUMM.xlsx',index_col = 0)
+chemsumm = pd.read_excel('Kortright_OPECHEMSUMM.xlsx',index_col = 0)
 #chemsumm = pd.read_excel('OPECHEMSUMM.xlsx',index_col = 0)
 #emsumm = pd.read_excel('PROBLEMCHEMSUMM.xlsx',index_col = 0)
 #chemsumm = pd.read_excel('EHDPPCHEMSUMM.xlsx',index_col = 0)
@@ -34,14 +34,14 @@ if totalt <= len(timeseries):
 else:
     while math.ceil(totalt/len(timeseries)) > 2.0:
         timeseries = timeseries.append(timeseries)
-    totalt = totalt - len(timeseries)
+    totalt = totalt - len(timeseries)s
     timeseries = timeseries.append(timeseries[0:totalt])
     timeseries.loc[:,'time'] = np.arange(1,len(timeseries)+1,timeseries.time.iloc[1]-timeseries.time.iloc[0])
     timeseries.index = range(len(timeseries))
     
-numc = 8 #Change to 1 for pure advection testing of water compartment
 pp = None
-test = LomaLoadings(locsumm,chemsumm,params,8) #Leave this as 8 always
+numc = ['water', 'subsoil','topsoil','rootbody', 'rootxylem', 'rootcyl','shoots', 'air']
+test = LomaLoadings(locsumm,chemsumm,params,numc) 
 #res = test.make_system(locsumm,params,numc)
 #chemsumm = test.make_chems(chemsumm,pp=None)
 #res = test.input_calc(locsumm,chemsumm,params,pp,numc)
@@ -49,7 +49,10 @@ start = time.time()
 #chemsumm, res = test.sys_chem(locsumm,chemsumm,params,pp,numc)
 
 #res = test.ic
-res_t, res_time = test.run_it(locsumm,chemsumm,params,numc,pp,timeseries)
+#res = test.make_system(locsumm,params,numc,timeseries,params.val.dx)
+
+#res_time = test.input_calc(locsumm,chemsumm,params,pp,numc,timeseries)
+res_t, res_time = test.run_it(locsumm,chemsumm,params,pp,numc,timeseries)
 mf = test.mass_flux(res_time,numc)
 #res_t, res_time = test.run_it(locsumm,chemsumm,params,1,pp,timeseries)
 
