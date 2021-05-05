@@ -271,7 +271,7 @@ class FugModel(metaclass=ABCMeta):
         res.loc[:,'dmn'] = False
         res.loc[:,'dmd'] = False
         res.loc[(slice(None),slice(None),0),'dm0'] = True #0th discretized cell
-        if params.val.vert_flow is True:
+        if params.val.vert_flow == 1:
             res.loc[(slice(None),slice(None),slice(numx-2,numx-2)),'dmn'] = True #Last discretized cell excluding drain
             res.loc[(slice(None),slice(None),slice(numx-1,numx-1)),'dmd'] = True #Drainage cell
         else:
@@ -480,11 +480,11 @@ class FugModel(metaclass=ABCMeta):
                 relerr = err/(pondastar*res.loc[res.ndm,'Zpond']*np.array(res.Vpond[-1] + res.Qin[-1]*dt))
                 if (np.sum(res.loc[res.ndm,ponda_t]<0)>0) & (np.sum(relerr<1/1000000)!=0):
                     res.loc[res.ndm,ponda_t] = 0
-        elif params.val.Pulse == True:#Otherwise initialize these.
+        else:#Otherwise initialize these.
+            pdb.set_trace()
             res.loc[:,'Mqin'] = 0
             res.loc[:,'Min_p'] = res.loc[:,'Min']
-        else:
-            pass
+
 
         if sum(mask) != 0:
             #res[mask].groupby(level = 0)['del_0'].sum()
@@ -527,7 +527,7 @@ class FugModel(metaclass=ABCMeta):
             res.loc[mask,'M_star'] = slope.reindex(res.loc[mask,'M_star'].index,method = 'ffill') * (res.xf[mask] - res.xb[mask])
         #Define advective flow for the drainage cell
         #pdb.set_trace()
-        if params.val.vert_flow is True:
+        if params.val.vert_flow == 1:
             res.loc[res.dmd,'M_star']  = res.loc[res.dmd,'M_i'] \
             +np.array(res.loc[res.dmn,'M_n'] - res.loc[res.dmn,'M_xf'])\
             - np.array(dt*(res.loc[res.dmd,'a1_t']*res.loc[res.dmd,'Z1']*res.loc[res.dmd,'Qout']))#This line is advective mass out. -explicit.
@@ -552,7 +552,7 @@ class FugModel(metaclass=ABCMeta):
         #the back (b) term acting on x(i-1)
         res.loc[:,'b'] = 2*res.P*res.V1_b*res.Z1_b*res.disp_b/(res.dx + res.groupby(level = 0)['dx'].shift(1))
         #Set drainage zone to zero - no back diffusion.
-        if params.val.vert_flow is True:
+        if params.val.vert_flow == 1:
             res.loc[res.dmd,'b'] = 0
         #To deal with the upstream boundary condition:
         if params.val.Pulse == False: #For continuous influx/flux allowed across U/S boundary, we can simply set dx(i-1) = dx so that:
@@ -563,13 +563,13 @@ class FugModel(metaclass=ABCMeta):
         #forward (f) term acting on x(i+1)
         res.loc[:,'f'] = 2*res.P*res.V1_f*res.Z1_f*res.disp_f/(res.dx + res.groupby(level = 0)['dx'].shift(-1))
         res.loc[(slice(None),slice(None),res.dmn),'f'] = 0 #No diffusion across downstream boundary
-        if params.val.vert_flow is True:
+        if params.val.vert_flow == 1:
             res.loc[res.dmd,'f'] = 0 #Or out of drainage zone
         #Middle (m) term acting on x(i) - this will be subracted in the matrix (-m*ai)
         #Upstream and downstream BCs have been dealt with in the b and f terms
         res.loc[:,'m'] = res.f+res.b+dt*res.DT1+res.V1*res.Z1
         #For the drainage zone
-        if params.val.vert_flow is True:
+        if params.val.vert_flow == 1:
             res.loc[res.dmd,'m'] = dt*res.DT1+res.V1*res.Z1#+dt*(res.loc[res.dmd,'Z1']*res.loc[res.dmd,'Qout'])
         #res.loc[res.dmd,'m'] = 0 #Turn off drainage other processes
         #Now we are going to set res.dm back to including the drainage cell.
@@ -624,9 +624,9 @@ class FugModel(metaclass=ABCMeta):
                         if np.any(res.loc[res.dm,D_val]< 0):
                             pass
                         #For the root cylinder, we need to pass the evapotranspiration up the roots for vertical systems
-                        elif (numc[j] in ['rootcyl']) and (params.val.vert_flow is True):
+                        elif (numc[j] in ['rootcyl']) and (params.val.vert_flow == 1):
                             #pdb.set_trace()
-                            #pass
+                            #From root cylinder below to root cylinder above.
                             mat[:,m_vals[0:numx-1]+j,b_vals+j] = dt * np.array(res.loc[res.dm,'D_csh'].shift(-1)).reshape(numchems,numx)[:,slice(0,numx-1)]
                         res.loc[:,D_valm] = dt*res.loc[:,D_val] + res.loc[:,V_val]*res.loc[:,Z_val]
                         #Diagonal cannot be zero to solve the equation, set to -1. Since the a value here will always be 0 this shouldn't be a problem.
@@ -664,6 +664,7 @@ class FugModel(metaclass=ABCMeta):
                     - np.array(res.loc[res.ndm,a_val])\
                     *np.array(res.loc[res.ndm,Z_val])\
                     *np.array(res.loc[res.ndm,V_val])
+                #k = 0
                 for k in range(0,len(numc)): #k is the column index
                     if (j == k):
                         D_val, D_valm, V_val, Z_val = 'DT' + str(k+1),'DTm' + str(k+1), 'V' + str(k+1), 'Z' + str(k+1)

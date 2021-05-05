@@ -721,7 +721,7 @@ class SubsurfaceSinks(FugModel):
                             #pdb.set_trace()
                             res.loc[mask,'D_csh'] = res.Qetplant*res.loc[:,Zw_j]
                             #If the system flows vertically - flux goes up discretized units
-                            if params.val.vert_flow is True:
+                            if params.val.vert_flow == 1:
                                 #Flux up the central cylinder. Stays in same compartment but goes vertically up discretized units.
                                 res.loc[(mask) & (res.x != min(res.x)),'D_'+str(jind)+str(jind)] += res.loc[mask,'D_csh']
                                 res.loc[(mask) & (res.x != min(res.x)),Dtj] += res.loc[mask,'D_csh'] 
@@ -792,11 +792,16 @@ class SubsurfaceSinks(FugModel):
                                    +y/(Apondair[mask]*res.loc[mask,'D_air']*res[mask].Zair+\
                                 Apondair[mask]*res.loc[mask,'Deff_pond']*res.loc[mask,Zw_k])) #Dry diffusion
                             res.loc[np.isnan(res.D_dairpond),'D_dairpond'] = 0 #Set NaNs to zero
-
-                            res.loc[mask,'D_rp'] = Apondair * res.loc[:,Zw_j]*rainrate.reindex(res.index,level=1).loc[:,0]\
-                                * params.val.Ifw  #Wet dep of gas to pond
-                            res.loc[mask,'D_qp'] = Apondair * res.loc[:,Zq_j]*rainrate.reindex(res.index,level=1).loc[:,0]\
-                                * params.val.Q * params.val.Ifw #Wet dep of aerosol
+                            try: #Code problem - need different indexing for subsurface sinks vs BC blues.
+                                res.loc[mask,'D_rp'] = Apondair * res.loc[:,Zw_j]*rainrate.reindex(res.index,level=1).loc[:,0]\
+                                    * params.val.Ifw  #Wet dep of gas to pond
+                                res.loc[mask,'D_qp'] = Apondair * res.loc[:,Zq_j]*rainrate.reindex(res.index,level=1).loc[:,0]\
+                                    * params.val.Q * params.val.Ifw #Wet dep of aerosol
+                            except KeyError:
+                                res.loc[mask,'D_rp'] = Apondair * res.loc[:,Zw_j]*rainrate.reindex(res.index,level=1)\
+                                    * params.val.Ifw  #Wet dep of gas to pond
+                                res.loc[mask,'D_qp'] = Apondair * res.loc[:,Zq_j]*rainrate.reindex(res.index,level=1)\
+                                    * params.val.Q * params.val.Ifw #Wet dep of aerosol
                             res.loc[mask,'D_dp'] = Apondair * res.loc[:,Zq_j] * params.val.Up *Ifd  #dry dep of aerosol
                             #Overall D values- only diffusion from shoots to air
                             res.loc[mask,D_jk] = res.loc[:,'D_dairpond']
@@ -1078,7 +1083,7 @@ class SubsurfaceSinks(FugModel):
         
         #ntimes = len(timeseries.index)
         #Update params on the outside of the timeloop
-        if params.val.vert_flow is True:
+        if params.val.vert_flow == 1:
             params.loc['L','val'] = locsumm.Depth.subsoil + locsumm.Depth.topsoil
         else:
             params.loc['L','val'] = locsumm.Length.water
@@ -1132,7 +1137,7 @@ class SubsurfaceSinks(FugModel):
             #Now - run it forwards a time step!
             #Feed the time to params
             res_t = res.loc[(slice(None),t,slice(None)),:]
-            if t == 260: #216:#412: #630# 260 is location of mass influx from tracer test; stop at spot for error checking
+            if t == 216:#260: #216:#412: #630# 260 is location of mass influx from tracer test; stop at spot for error checking
                 #pdb.set_trace()
                 xxx = 'why'
                 yy = 'seriously stop'
@@ -1143,7 +1148,7 @@ class SubsurfaceSinks(FugModel):
                 res.loc[(slice(None),t,slice(None)),M_val] = res_t.loc[(slice(None),t,slice(None)),M_val]
                 res.loc[(slice(None),t,slice(None)),'M_tot'] += res.loc[(slice(None),t,slice(None)),M_val]
             #Also put the water and soil inputs in.
-            if params.val.vert_flow == True:
+            if params.val.vert_flow == 1:
                 res.loc[(slice(None),t,slice(None)),'Mqin'] = res_t.loc[(slice(None),t,slice(None)),'Mqin']
                 res.loc[(slice(None),t,slice(None)),'Min_p'] = res_t.loc[(slice(None),t,slice(None)),'Min_p']
             else: #Set upstream mass in here

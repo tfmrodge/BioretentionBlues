@@ -90,7 +90,7 @@ yvar = 'Q_out'
 comp1 = 'water'
 comp2 = 'drain'
 comp3 = 'pond'
-shiftdist = 12
+shiftdist = 0
 pltdata = res_time.loc[(slice(210,timeseries.index[-1]),comp2),:] #To plot 
 pltdata2 = res_time.loc[(slice(210,timeseries.index[-1]),comp3),:]
 #res_time.loc[(plttime,slice(None),slice(None)),slice(None)] #Just at plttime
