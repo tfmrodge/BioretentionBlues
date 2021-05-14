@@ -21,16 +21,19 @@ from hydroeval import *
 #params = pd.read_excel('params_BC_SlowDrain.xlsx',index_col = 0)
 #locsumm = pd.read_excel('Kortright_FullBC.xlsx',index_col = 0)
 #Next two are the "normal" ones
+#params = pd.read_excel('params_BC_6.xlsx',index_col = 0) 
 params = pd.read_excel('params_BC_5.xlsx',index_col = 0) 
 #params = pd.read_excel('params_BC_synthetic.xlsx',index_col = 0)
-locsumm = pd.read_excel('Kortright_BC.xlsx',index_col = 0)
+#locsumm = pd.read_excel('Kortright_BC.xlsx',index_col = 0)
+locsumm = pd.read_excel('Kortright_BC_test.xlsx',index_col = 0)
+
 #
 locsumm.iloc[:,slice(0,14)] = locsumm.astype('float') #Convert any ints to floats 
 #locsumm = pd.read_excel('Oro_Loma_1.xlsx',index_col = 0) 
 #All chemicals, including OPEs
-chemsumm = pd.read_excel('Kortright_ALLCHEMSUMM.xlsx',index_col = 0)
+#chemsumm = pd.read_excel('Kortright_ALLCHEMSUMM.xlsx',index_col = 0)
 #Synthetic chemicals for exploring chemical space
-#chemsumm = pd.read_excel('Kortright_KowCHEMSUMM.xlsx',index_col = 0)
+chemsumm = pd.read_excel('Kortright_KowCHEMSUMM.xlsx',index_col = 0)
 #Not including OPEs
 #chemsumm = pd.read_excel('Kortright_CHEMSUMM.xlsx',index_col = 0)
 #Specific Groups
@@ -40,8 +43,8 @@ chemsumm = pd.read_excel('Kortright_ALLCHEMSUMM.xlsx',index_col = 0)
 #timeseries = pd.read_excel('timeseries_tracertest_Kortright_valve.xlsx')
 #timeseries = pd.read_excel('timeseries_tracertestExtended_Kortright_AllChems.xlsx')
 #***SYNTHETIC EVENT***
-#timeseries = pd.read_excel('timeseries_synthetic.xlsx')
-timeseries = pd.read_excel('timeseries_tracertest_Kortright_Short.xlsx')
+timeseries = pd.read_excel('timeseries_synthetic.xlsx')
+#timeseries = pd.read_excel('timeseries_tracertest_Kortright_Short.xlsx')
 #timeseries = pd.read_excel('timeseries_tracertest_Kortright_extended.xlsx')
 #timeseries = pd.read_excel('timeseries_tracertestExtended_Kortright_SlowDrain.xlsx')
 #timeseries = pd.read_excel('timeseries_tracertest630Max_Test.xlsx')
@@ -76,9 +79,9 @@ else:
 #res_time =pd.read_pickle('D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/Flow_time_tracertest.pkl')
 #Extended
 pdb.set_trace()
-res =pd.read_pickle('D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/tracer_input_calcs_extended.pkl')
+#res =pd.read_pickle('D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/tracer_input_calcs_extended.pkl')
 #630 max
-#res =pd.read_pickle('D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/tracer_input_calcs_630max.pkl')
+res =pd.read_pickle('D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/tracer_input_calcs_synthetic.pkl')
 #mask = input_calcs.time>=0 #Find all the positive values
 #mask = mask == False 
 #minslice = np.min(np.where(mask))
@@ -100,11 +103,16 @@ res = df_sliced_index(res.loc[(slice(None),slice(mintime,maxtime),slice(None)),:
 outpath ='D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/tracer_input_calcs_630.pkl'
 res.to_pickle(outpath)
 '''
+#Load steady-state concentrations as the initial conditions.
+#laststep = pd.read_pickle('D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/tracer_outs_steady.pkl')
+
 #Then, run it.
 start = time.time()
+#No initial conditions
 res = test.run_it(locsumm,chemsumm,params,pp,numc,timeseries,res)
+#With initial conditions
+#res = test.run_it(locsumm,chemsumm,params,pp,numc,timeseries,res,last_step=laststep)
 codetime = (time.time()-start)
-#res = test.run_it(locsumm,chemsumm,params,pp,numc,timeseries,res,last_step)
 mass_flux = test.mass_flux(res,numc) #Run to get mass flux
 mbal = test.mass_balance(res,numc,mass_flux)
 Couts = test.conc_out(numc,timeseries,chemsumm,res,mass_flux)
@@ -134,6 +142,7 @@ ax.set_ylabel(ylabel, fontsize=20)
 ax.set_xlabel(xlabel, fontsize=20)
 ax.tick_params(axis='both', which='major', labelsize=15)
 #Save it
-outpath ='D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/tracer_outs_extended.pkl'
+outpath ='D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/tracer_outs_synthetic.pkl'
+#outpath ='D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/tracer_outs_extended.pkl'
 #outpath ='D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/tracer_outs_630max.pkl'
 res.to_pickle(outpath)
