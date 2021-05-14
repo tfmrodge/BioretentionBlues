@@ -445,7 +445,7 @@ class SubsurfaceSinks(FugModel):
             try:
                 rainrate = pd.DataFrame(np.array(timeseries.loc[(slice(None),'pond'),'QET']),index = timeseries.index.levels[0]).reindex(res.index,level=1).loc[:,0]
                 #Test this.
-                rainrate = rainrate.reindex(res.index,level=1).loc[:,0]
+                #rainrate = rainrate.reindex(res.index,level=1).loc[:,0]
             except KeyError:
                 rainrate = timeseries.RainRate.reindex(res.index,method = 'bfill')
         #D values (m³/h), N (mol/h) = a*D (activity based)
@@ -597,8 +597,7 @@ class SubsurfaceSinks(FugModel):
                                     masksh = res.dm==False
                                 else:
                                     masksh = res.dm
-                                res.loc[masksh,'D_cd'] = res.A_shootair * rainrate*(params.val.Ifw - params.val.Ilw)\
-                                       *params.val.lamb * res.Zshoots  
+                                res.loc[masksh,'D_cd'] = res.A_shootair * rainrate*(params.val.Ifw - params.val.Ilw)*params.val.lamb * res.Zshoots  
                                 #Wax erosion
                                 res.loc[masksh,'D_we'] = res.A_shootair * params.val.kwe * res.Zshoots   
                                 #litterfall & plant death?
@@ -793,10 +792,11 @@ class SubsurfaceSinks(FugModel):
                                 Apondair[mask]*res.loc[mask,'Deff_pond']*res.loc[mask,Zw_k])) #Dry diffusion
                             res.loc[np.isnan(res.D_dairpond),'D_dairpond'] = 0 #Set NaNs to zero
                             try: #Code problem - need different indexing for subsurface sinks vs BC blues.
-                                res.loc[mask,'D_rp'] = Apondair * res.loc[:,Zw_j]*rainrate.reindex(res.index,level=1).loc[:,0]\
-                                    * params.val.Ifw  #Wet dep of gas to pond
-                                res.loc[mask,'D_qp'] = Apondair * res.loc[:,Zq_j]*rainrate.reindex(res.index,level=1).loc[:,0]\
-                                    * params.val.Q * params.val.Ifw #Wet dep of aerosol
+                                #pdb.set_trace()
+                                res.loc[mask,'D_rp'] = Apondair * res.loc[:,Zw_j]*rainrate* params.val.Ifw #rainrate.reindex(res.index,level=1).loc[:,0]\
+                                    #Wet dep of gas to pond
+                                res.loc[mask,'D_qp'] = Apondair * res.loc[:,Zq_j]*rainrate* params.val.Q  #.reindex(res.index,level=1).loc[:,0]\
+                                     #Wet dep of aerosol
                             except KeyError:
                                 res.loc[mask,'D_rp'] = Apondair * res.loc[:,Zw_j]*rainrate.reindex(res.index,level=1)\
                                     * params.val.Ifw  #Wet dep of gas to pond
@@ -1087,7 +1087,7 @@ class SubsurfaceSinks(FugModel):
             params.loc['L','val'] = locsumm.Depth.subsoil + locsumm.Depth.topsoil
         else:
             params.loc['L','val'] = locsumm.Length.water
-        check = np.zeros([len(timeseries.index),len(chemsumm.index)])
+        #check = np.zeros([len(timeseries.index),len(chemsumm.index)])
         #Initialize total mass and minp, minq
         res.loc[:,'M_tot'] = 0
         
@@ -1116,7 +1116,7 @@ class SubsurfaceSinks(FugModel):
                         res.loc[(slice(None),t,slice(None)),a_val] = last_step.iloc[:,j].reindex(res.index,level=0)
                     except AttributeError:
                         res.loc[(slice(None),t,slice(None)),a_val] = 0 #1#Can make different for the different compartments
-                    dt = timeseries.time[1]-timeseries.time[0]
+                dt = timeseries.time[1]-timeseries.time[0]
  
                 
             else: #Set the previous solution aj_t1 to the inital condition (aj_t)
@@ -1155,21 +1155,21 @@ class SubsurfaceSinks(FugModel):
                 res.loc[(slice(None),t,slice(None)),'Min'] = res_t.loc[(slice(None),t,slice(None)),'Min']
                 res.loc[(slice(None),t,slice(None)),'Mqin'] = 0
                 res.loc[(slice(None),t,slice(None)),'Min_p'] = res.loc[(slice(None),t,slice(None)),'Min']
-
+            res.loc[(slice(None),t,slice(None)),'M_xf'] = res_t.loc[(slice(None),t,slice(None)),'M_xf']
+            res.loc[(slice(None),t,slice(None)),'M_n'] = res_t.loc[(slice(None),t,slice(None)),'M_n']
             #mass = res.loc[(slice(None),t,slice(None)),'a1_t1']*res.loc[(slice(None),t,slice(None)),'Z1']\
             #*res.loc[(slice(None),t,slice(None)),'V1'] + res.loc[(slice(None),t,slice(None)),'a2_t1']\
             #*res.loc[(slice(None),t,slice(None)),'Z2']*res.loc[(slice(None),t,slice(None)),'V2']
             
-            if t >= 260:#260:#260 is injection
-                pass
+            #if t >= 260:#260:#260 is injection
+            #    pass
                 #check[t] = np.array(res.loc[(slice(None),slice(None),0),'Min'].groupby(level=0).sum()) - np.array(res.M_tot.groupby(level = 0).sum())
                 #check[t] = np.array(res.loc[(slice(None),260,0),'Min'])\
                 #- np.array(mass.groupby(level = 0).sum())
-            else:
-                check[t] = np.array(res.loc[(slice(None),t,0),'Min']) - np.array(res.M_tot.groupby(level = 0).sum())
+            #else:
+            #    check[t] = np.array(res.loc[(slice(None),t,0),'Min']) - np.array(res.M_tot.groupby(level = 0).sum())
                     #res.loc[(slice(None),t,slice(None)),inp_mass] = res_t.loc[(slice(None),t,slice(None)),inp_mass]
-            res.loc[(slice(None),t,slice(None)),'M_xf'] = res_t.loc[(slice(None),t,slice(None)),'M_xf']
-            res.loc[(slice(None),t,slice(None)),'M_n'] = res_t.loc[(slice(None),t,slice(None)),'M_n']
+
             #res.loc[(slice(None),t,slice(None)),'M_tot'] = mass
         return res
     
