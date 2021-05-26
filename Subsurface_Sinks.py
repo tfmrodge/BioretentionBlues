@@ -1340,7 +1340,7 @@ class SubsurfaceSinks(FugModel):
             normalized (bool, optional) = Normalize the mass transfers to the total mass that has entered the system.
                 Note that this will only normalize certain outputs
         """  
-        pdb.set_trace()
+        #pdb.set_trace()
         #Set up mbal. Need to run as non-normalized in order for normalization here to work. Might fix this later, for now it is good enough
         try:
             mbal = mass_balance
