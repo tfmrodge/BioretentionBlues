@@ -18,22 +18,22 @@ import hydroeval #For the efficiency
 from hydroeval import kge #Kling-Gupta efficiency (Kling-Gupta et al., 2009)
 from hydroeval import *
 #plt.style.use("ggplot")
-#params = pd.read_excel('params_1d.xlsx',index_col = 0) 
+params = pd.read_excel('params_1d.xlsx',index_col = 0) 
 #params = pd.read_excel('params_OroLoma_CellF.xlsx',index_col = 0)
-params = pd.read_excel('params_OroLomaTracertest.xlsx',index_col = 0)
+#params = pd.read_excel('params_OroLomaTracertest.xlsx',index_col = 0)
 #Cell F and G
-#locsumm = pd.read_excel('Oro_Loma_CellF.xlsx',index_col = 0) 
+locsumm = pd.read_excel('Oro_Loma_CellF.xlsx',index_col = 0) 
 #locsumm = pd.read_excel('Oro_Loma_CellG.xlsx',index_col = 0) 
 #15 cm tracertest conducted with the Oro Loma system Mar. 2019
-locsumm = pd.read_excel('Oro_Loma_Brtracertest.xlsx',index_col = 0) 
+#locsumm = pd.read_excel('Oro_Loma_Brtracertest.xlsx',index_col = 0) 
 #chemsumm = pd.read_excel('Kortright_OPECHEMSUMM.xlsx',index_col = 0)
 
 #Specific Groups
-chemsumm = pd.read_excel('Kortright_BRCHEMSUMM.xlsx',index_col = 0)
-#chemsumm = pd.read_excel('Oro_OPECHEMSUMM.xlsx',index_col = 0)
+chemsumm = pd.read_excel('Oro_ALLCHEMSUMM.xlsx',index_col = 0)
+#chemsumm = pd.read_excel('Oro_FAVCHEMSUMM.xlsx',index_col = 0)
 
-timeseries = pd.read_excel('timeseries_OroLomaTracertest.xlsx')
-#timeseries = pd.read_excel('timeseries_OroLoma_Dec_CellF.xlsx')
+#timeseries = pd.read_excel('timeseries_OroLomaTracertest.xlsx')
+timeseries = pd.read_excel('timeseries_OroLoma_Dec_CellF.xlsx')
 #timeseries = pd.read_excel('timeseries_OroLoma_Spinup_CellF.xlsx')
 #Truncate timeseries if you want to run fewer
 pdb.set_trace()
@@ -52,16 +52,18 @@ pp = None
 numc = ['water', 'subsoil','topsoil','rootbody', 'rootxylem', 'rootcyl','shoots', 'air']
 test = LomaLoadings(locsumm,chemsumm,params,numc) 
 
-res = pd.read_pickle('D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/oro_input_calcs.pkl')
+res = pd.read_pickle('D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/oro_input_calcs_extended.pkl')
 #Load steady-state concentrations as the initial conditions.
-laststep = pd.read_pickle('D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/oro_outs_steady.pkl')
-
+#laststep = pd.read_pickle('D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/oro_outs_steady.pkl')
+#laststep = pd.read_pickle('D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/oro_input_calcs_spinup.pkl')
+outpath ='D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/oro_outs_spinup20210602.pkl'
+laststep = pd.read_pickle(outpath)
 
 #Then, run it.
 start = time.time()
 res = test.run_it(locsumm,chemsumm,params,pp,numc,timeseries,res,last_step=laststep)
 codetime = (time.time()-start)
-#res = test.run_it(locsumm,chemsumm,params,pp,numc,timeseries,res,last_step)
+#res = test.run_it(locsumm,chemsumm,params,pp,numc,timeseries,res)
 mass_flux = test.mass_flux(res,numc) #Run to get mass flux
 mbal = test.mass_balance(res,numc,mass_flux)
 Couts = test.conc_out(numc,timeseries,chemsumm,res,mass_flux)

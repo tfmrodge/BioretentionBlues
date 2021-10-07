@@ -41,17 +41,42 @@ def run_BC(modparams):
     
     return model_outs
 
-params = pd.read_excel('params_BC_synthetic.xlsx',index_col = 0)
+#params = pd.read_excel('params_BC_synthetic.xlsx',index_col = 0)
+params = pd.read_excel('params_BC_5.xlsx',index_col = 0) 
+#params = pd.read_excel('params_BC_highplant.xlsx',index_col = 0)
 locsumm = pd.read_excel('Kortright_BC.xlsx',index_col = 0)
-chemsumm = pd.read_excel('Kortright_KowCHEMSUMM.xlsx',index_col = 0)
-timeseries = pd.read_excel('timeseries_synthetic.xlsx')
+chemsumm = pd.read_excel('Kortright_KowCHEMSUMM_7.xlsx',index_col = 0)
+#chemsumm = pd.read_excel('Kortright_ALLCHEMSUMM.xlsx',index_col = 0)
+#chemsumm = pd.read_excel('Kortright_benzCHEMSUMM.xlsx',index_col = 0)
+pdb.set_trace()
+#chemsumm.loc[:,'VegHL'] = params.val.VegHL*chemsumm.VegHL
+#timeseries = pd.read_excel('timeseries_synthetic.xlsx')
+#timeseries = pd.read_excel('timeseries_tracertest_synthetic.xlsx')
+timeseries = pd.read_excel('timeseries_tracertest_Kortright_extended.xlsx')
 numc = ['water', 'subsoil','rootbody', 'rootxylem', 'rootcyl','shoots', 'air', 'pond']
 pp = None
 
 modparams = [locsumm,chemsumm,timeseries,pp,numc,params]
+kortright_BC = BCBlues(modparams[0],modparams[1],modparams[5],modparams[2],modparams[4])
 start = time.time()
 #res = Parallel(n_jobs=2)(delayed(run_BC)(modparams) for j in [0])
 res = run_BC(modparams)
+#mbal = kortright_BC.mass_balance(res,numc)
+#mbal_cum = kortright_BC.mass_balance_cumulative(numc, mass_balance = mbal,normalized=True)
+#t = res.index.levels[1][-1] # 630 #6356#
+#Total mass out through water
+'''
+df_chemspace=pd.DataFrame(index=mbal.index.levels[0]) 
+df_chemspace.loc[:,'watfrac'] = np.array(mbal_cum.loc[(slice(None),t),['Madvpond','Mexf','Meff']].sum(axis=1))*100
+df_chemspace.loc[:,'soilfrac'] = np.array(mbal_cum.loc[(slice(None),t),['Msubsoil']])*100
+df_chemspace.loc[:,'airfrac'] = np.array(mbal_cum.loc[(slice(None),t),['Madvair']])*100
+df_chemspace.loc[:,'rxnfrac'] = np.array(mbal_cum.loc[(slice(None),t),['Mrwater','Mrsubsoil','Mrrootbody','Mrrootxylem',
+                                                                         'Mrrootcyl','Mrshoots','Mrair','Mrpond']].sum(axis=1))*100
+df_chemspace.loc[:,'soilrxnfrac'] = np.array(mbal_cum.loc[(slice(None),t),'Mrsubsoil'])*100
+df_chemspace.loc[:,'vegrxnfrac'] = np.array(mbal_cum.loc[(slice(None),t),['Mrrootbody','Mrrootxylem',
+                                                                         'Mrrootcyl','Mrshoots']].sum(axis=1))*100
+'''
 codetime = (time.time()-start)
-outpath ='D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/tracer_outs_synthetic.pkl'
+#outpath ='D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/tracer_outs_SUBMISSION20210826.pkl'
+outpath ='D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/tracer_outs_synthetic_7large.pkl'
 res.to_pickle(outpath)

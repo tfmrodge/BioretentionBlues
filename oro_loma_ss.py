@@ -14,8 +14,8 @@ import math
 #plt.style.use("ggplot")
 #from data_1d import makeic
 
-#params = pd.read_excel('params_1d.xlsx',index_col = 0) 
-params = pd.read_excel('params_OroLoma_CellF.xlsx',index_col = 0)
+params = pd.read_excel('params_1d.xlsx',index_col = 0) 
+#params = pd.read_excel('params_OroLoma_CellF.xlsx',index_col = 0)
 #params = pd.read_excel('params_OroLomaTracertest.xlsx',index_col = 0)
 #Cell F and G
 locsumm = pd.read_excel('Oro_Loma_CellF.xlsx',index_col = 0) 
@@ -26,7 +26,7 @@ locsumm = pd.read_excel('Oro_Loma_CellF.xlsx',index_col = 0)
 
 #Specific Groups
 #chemsumm = pd.read_excel('Kortright_BRCHEMSUMM.xlsx',index_col = 0)
-chemsumm = pd.read_excel('Oro_OPECHEMSUMM.xlsx',index_col = 0)
+chemsumm = pd.read_excel('Oro_FAVCHEMSUMM.xlsx',index_col = 0)
 
 #timeseries = pd.read_excel('timeseries_OroLomaTracertest.xlsx')
 timeseries = pd.read_excel('timeseries_OroLoma_Dec_CellF.xlsx')
@@ -50,13 +50,15 @@ numc = ['water', 'subsoil','topsoil','rootbody', 'rootxylem', 'rootcyl','shoots'
 test = LomaLoadings(locsumm,chemsumm,params,numc) 
 #Run or load inputs
 pdb.set_trace()
-#res =pd.read_pickle('D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/oro_input_calcs.pkl')
+res =pd.read_pickle('D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/oro_input_calcs.pkl')
 #res = test.input_calc(locsumm,chemsumm,params,pp,numc,timeseries)
 
 ssdata = res.loc[(slice(None),slice(3),slice(None)),:].groupby(level = 0).sum()
 
 for chem in chemsumm.index:
-    ssdata.loc[chem,'inp_1'] = timeseries.loc[:,chem+'_Cin'].mean()
+    #ssdata.loc[chem,'inp_1'] = timeseries.loc[:,chem+'_Cin'].mean()*timeseries.loc[:,'Qin'].mean()/chemsumm.loc[chem,'MolMass']
+    #ssdata.loc[chem,'inp_1'] = timeseries.loc[:,chem+'_Cin'].mean()#*timeseries.loc[:,'Qin'].mean()/chemsumm.loc[chem,'MolMass']
+    ssdata.loc[chem,'inp_1'] = timeseries.loc[:,chem+'_Cin'].mean()/chemsumm.MolMass[chem]/res.loc[(chem,slice(None),0),'Z1'].mean()
 SSouts = test.forward_calc_ss(ssdata,8)
 outpath ='D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/oro_outs_steady.pkl'
 #outpath ='D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/tracer_outs_630max.pkl'

@@ -678,7 +678,7 @@ class BCBlues(SubsurfaceSinks):
             #if testchamp > champ:
             #    champ = testchamp
             
-    def BC_fig(self,numc,mass_balance,time=None,compound=None,figname='20210217_BC_Model_Figure_rgb.tif',dpi=100,fontsize=8,figheight=6,dM_locs=None,M_locs=None):
+    def BC_fig(self,numc,mass_balance,time=None,compound=None,figname='20210825_BC_Model_Figure_rgb.tif',dpi=100,fontsize=8,figheight=6,dM_locs=None,M_locs=None):
             """ 
             Show modeled fluxes and mass distributions on a bioretention cell figure. 
             Just a wrapper to give the correct figure to the main function

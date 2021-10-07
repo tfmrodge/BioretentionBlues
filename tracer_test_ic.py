@@ -19,23 +19,24 @@ from hydroeval import kge #Kling-Gupta efficiency (Kling-Gupta et al., 2009)
 #Testing slow drainage - how would this change performance? 
 #params = pd.read_excel('params_BC_SlowDrain.xlsx',index_col = 0) 
 #params = pd.read_excel('params_BC_highplant.xlsx',index_col = 0)
-params = pd.read_excel('params_BC_SlowDrain.xlsx',index_col = 0) 
-#params = pd.read_excel('params_BC_5.xlsx',index_col = 0)  
+#params = pd.read_excel('params_BC_SlowDrain.xlsx',index_col = 0) 
+params = pd.read_excel('params_BC_5.xlsx',index_col = 0)  
 #params = pd.read_excel('params_BC_synthetic.xlsx',index_col = 0)
-#locsumm = pd.read_excel('Kortright_BC.xlsx',index_col = 0)
-locsumm = pd.read_excel('Kortright_FullBC.xlsx',index_col = 0)
+locsumm = pd.read_excel('Kortright_BC.xlsx',index_col = 0)
+#locsumm = pd.read_excel('Kortright_FullBC.xlsx',index_col = 0)
 #locsumm = pd.read_excel('Kortright_BC_test.xlsx',index_col = 0)
 #Assuming the entire bioretention cell area is utilized
 #locsumm = pd.read_excel('Kortright_FullBC.xlsx',index_col = 0)
 locsumm.iloc[:,slice(0,14)] = locsumm.astype('float') #Convert any ints to floats 
 #locsumm = pd.read_excel('Oro_Loma_1.xlsx',index_col = 0) 
 #All chemicals, including OPEs
-chemsumm = pd.read_excel('Kortright_ALLCHEMSUMM.xlsx',index_col = 0)
+#chemsumm = pd.read_excel('Kortright_ALLCHEMSUMM.xlsx',index_col = 0)
 #Synthetic chemicals for exploring chemical space
 #chemsumm = pd.read_excel('Kortright_KowCHEMSUMM.xlsx',index_col = 0)
 #Not including OPEs
 #chemsumm = pd.read_excel('Kortright_CHEMSUMM.xlsx',index_col = 0)
 #Specific Groups
+chemsumm = pd.read_excel('Kortright_benztrans_CHEMSUMM.xlsx',index_col = 0)
 #chemsumm = pd.read_excel('TPhP_CHEMSUMM.xlsx',index_col = 0)
 #chemsumm = pd.read_excel('Kortright_BRCHEMSUMM.xlsx',index_col = 0)
 #chemsumm = pd.read_excel('Kortright_OPECHEMSUMM.xlsx',index_col = 0)
@@ -80,8 +81,8 @@ else:
 
 start = time.time()
 #res_time =pd.read_pickle('D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/Flow_time_tracertest_synthetic.pkl')
-#res_time =pd.read_pickle('D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/Flow_time_tracertest_extended.pkl')
-res_time =pd.read_pickle('D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/Flow_time_tracertest_highplant.pkl')
+res_time =pd.read_pickle('D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/Flow_time_tracertest_extended.pkl')
+#res_time =pd.read_pickle('D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/Flow_time_tracertest_highplant.pkl')
 mask = timeseries.time>=0 #Find all the positive values
 #mask = mask == False 
 minslice = np.min(np.where(mask))
@@ -97,6 +98,7 @@ codetime = (time.time()-start)
 #For the input calcs
 #outpath ='D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/tracer_input_calcs_synthetic.pkl'
 #outpath ='D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/tracer_input_calcs_extended.pkl'
-outpath ='D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/tracer_input_calcs_highplant.pkl'
+outpath ='D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/tracer_input_calcs_benztrans_highveg.pkl'
+#outpath ='D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/tracer_input_calcs_highplant.pkl'
 #outpath ='D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/tracer_input_calcs.pkl'
 res_t.to_pickle(outpath)

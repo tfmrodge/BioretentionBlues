@@ -19,6 +19,7 @@ from scipy.interpolate import interp1d
 from scipy.optimize import minimize
 import time
 import pdb #Turn on for error checking
+import sys
 #import xarray as xr #cite as https://openresearchsoftware.metajnl.com/articles/10.5334/jors.148/
 
 class FugModel(metaclass=ABCMeta):
@@ -481,7 +482,7 @@ class FugModel(metaclass=ABCMeta):
                 if (np.sum(res.loc[res.ndm,ponda_t]<0)>0) & (np.sum(relerr<1/1000000)!=0):
                     res.loc[res.ndm,ponda_t] = 0
         else:#Otherwise initialize these.
-            pdb.set_trace()
+            #db.set_trace()
             res.loc[:,'Mqin'] = 0
             res.loc[:,'Min_p'] = res.loc[:,'Min']
 
@@ -712,9 +713,10 @@ class FugModel(metaclass=ABCMeta):
                 #pdb.set_trace
                 res.loc[(slice(None),slice(None),slice(None)),inp_mass] = dt*res.loc[:,inp_val]
             if sum(res.loc[:,a_val]<0) >0: #If solution gives negative values flag it
-                pdb.set_trace()
-                xxx = 'poop'
-                
+                #pdb.set_trace()
+                #xxx = 'poop'
+                #On error, set all a values to zero.
+                sys.exit('Negative activity error')
         #xxx = 1
         #'''
         return res

@@ -165,7 +165,8 @@ class SubsurfaceSinks(FugModel):
             elif j in ['shoots','rootbody','rootxylem','rootcyl']:
                 res.loc[maskn,Kdj] = vant_conv(res.dUslw,res.loc[:,tempj],res.loc[:,focj].mul(10.**chemsumm.LogKslW, level = 0))
                 res.loc[maski,Kdij] = res.loc[maski,Kdj]
-                if 'VegHL' in res.columns:
+                if 'VegHL' in chemsumm.columns:
+                    chemsumm.loc[np.isnan(chemsumm.VegHL),'VegHL'] = chemsumm.WatHL*0.1
                     res.loc[:,rrxnj] = res['dummy'].mul(np.log(2)/chemsumm.VegHL,level = 0)
                 else:#If no HL for vegetation specified, assume 0.1 * wat HL - based on Wan (2017) wheat plants?
                     res.loc[:,rrxnj] = res['dummy'].mul(np.log(2)/(chemsumm.WatHL*0.1),level = 0)
@@ -446,8 +447,8 @@ class SubsurfaceSinks(FugModel):
                 rainrate = pd.DataFrame(np.array(timeseries.loc[(slice(None),'pond'),'QET']),index = timeseries.index.levels[0]).reindex(res.index,level=1).loc[:,0]
                 #Test this.
                 #rainrate = rainrate.reindex(res.index,level=1).loc[:,0]
-            except KeyError:
-                rainrate = timeseries.RainRate.reindex(res.index,method = 'bfill')
+            except TypeError:
+                rainrate = timeseries.RainRate.reindex(res.index,level=1)
         #D values (m³/h), N (mol/h) = a*D (activity based)
         #Loop through compartments to set D values
         #pdb.set_trace()
@@ -466,7 +467,8 @@ class SubsurfaceSinks(FugModel):
                 phij , rrxnq_j = 'phi'+str(j),'rrxnq_'+str(j)
                 res.loc[mask,Drj] = (1-res.loc[mask,phij])*res.loc[mask,Vj]* res.loc[mask,rrxnj]\
                 +res.loc[mask,phij]*res.loc[mask,rrxnq_j]
-            res.loc[mask,Drj] = res.loc[mask,Zj] * res.loc[mask,Vj] * res.loc[mask,rrxnj] 
+            else:
+                res.loc[mask,Drj] = res.loc[mask,Zj] * res.loc[mask,Vj] * res.loc[mask,rrxnj] 
             res.loc[mask,Dadvj] = res.loc[mask,Zj] * res.loc[mask,Vj] * res.loc[mask,advj]
             res.loc[mask,Dtj] = res.loc[mask,Drj] + res.loc[mask,Dadvj] #Initialize total D value
             #Now we will go through compartments. Since this is a model of transport in water, we assume there is always 
@@ -564,20 +566,24 @@ class SubsurfaceSinks(FugModel):
                             if k in ['rootbody']:
                                 Nj,Nk,Qetj,tempj,tempk = 'N'+str(j),'N'+str(k),'Qet'+str(j),'temp'+str(j),'temp'+str(k)
                                 Dsr_nj,Dsr_ij,Zw_j,Zwn_j,Zwi_j,Arootj = 'Dsr_n'+str(j),'Dsr_i'+str(j),'Zw_'+str(j),'Zwn_'+str(j),'Zwi_'+str(j),'Aroot'+str(j)
-                                Drs_nj,Drs_ij,Zwn_k,Zwi_k = 'Drs_n'+str(j),'Drs_i'+str(j),'Zwn_'+str(k),'Zwi_'+str(k)
+                                Drs_nj,Drs_ij,Zw_k,Zwn_k,Zwi_k = 'Drs_n'+str(j),'Drs_i'+str(j),'Zw_'+str(k),'Zwn_'+str(k),'Zwi_'+str(k)
                                 D_apoj,Qetj = 'D_apo'+str(j),'Qet'+str(j)
                                 #First, calculate the value of N =zeF/RT
                                 res.loc[mask,Nj] = res.chemcharge*params.val.E_plas*params.val.F/(params.val.R*res.loc[mask,tempj])
                                 res.loc[mask,Nk] = res.chemcharge*params.val.E_plas*params.val.F/(params.val.R*res.loc[mask,tempk])       
                                 res.loc[mask,Dsr_nj] = res.loc[mask,Arootj]*(res.kspn*res.loc[mask,Zwn_j])
                                 res.loc[mask,Dsr_ij] = res.loc[mask,Arootj]*(res.kspi*res.loc[mask,Zwi_j]*res.loc[mask,Nj]/(np.exp(res.loc[mask,Nj])-1))
+                                #20210726 Adding free flow between soil solution and root free space. Applies to both sides.
+                                res.loc[mask,'Drs_fs'] = res.loc[mask,Vk] * params.val.k_fs * res.loc[mask,Zw_k] 
                                 #Root back to soil
                                 res.loc[mask,Drs_nj] = res.loc[mask,Arootj]*(res.kspn*res.loc[mask,Zwn_k])
                                 res.loc[mask,Drs_ij] = res.loc[mask,Arootj]*(res.kspi*res.loc[mask,Zwi_k]*res.loc[mask,Nk]/(np.exp(res.loc[mask,Nk])-1))
+                                res.loc[mask,'Dsr_fs'] = res.loc[mask,Vk] * params.val.k_fs * res.loc[mask,Zw_j] 
                                 res.loc[res.chemcharge == 0,Dsr_ij], res.loc[res.chemcharge == 0,Drs_ij] = 0,0 #Set neutral to zero
+                                
                                 #Overall D values
-                                res.loc[mask,D_jk] = res.loc[mask,Dsr_nj] + res.loc[mask,Dsr_ij] 
-                                res.loc[mask,D_kj] = res.loc[mask,Drs_nj] + res.loc[mask,Drs_ij]  
+                                res.loc[mask,D_jk] = res.loc[mask,Dsr_nj] + res.loc[mask,Dsr_ij] + res.loc[mask,'Dsr_fs']
+                                res.loc[mask,D_kj] = res.loc[mask,Drs_nj] + res.loc[mask,Drs_ij] + res.loc[mask,'Drs_fs']
                             elif k in ['rootxylem']: 
                                 res.loc[mask,D_apoj] = res.loc[mask,Qetj]*(params.val.f_apo)*(res.loc[mask,Zw_j]) #Apoplast bypass straight to the xylem
                                 res.loc[mask,D_jk] = res.loc[mask,D_apoj] 
@@ -1111,11 +1117,12 @@ class SubsurfaceSinks(FugModel):
                 #initial Conditions
                 for j in range(0,len(numc)):
                     a_val = 'a'+str(j+1) + '_t'
-                    try: #If there is a last step, use that as the a_t values
-                        #res.loc[(slice(None),t,slice(None)),a_val] = last_step.loc[(slice(None),t,slice(None)),a_val]
+                    try: #From steady-state non spatially discrete model
                         res.loc[(slice(None),t,slice(None)),a_val] = last_step.iloc[:,j].reindex(res.index,level=0)
                     except AttributeError:
                         res.loc[(slice(None),t,slice(None)),a_val] = 0 #1#Can make different for the different compartments
+                    except TypeError: #From last time step of spatially discrete model
+                        res.loc[(slice(None),t,slice(None)),a_val] = np.array(last_step.loc[(slice(None),max(last_step.index.levels[1]),slice(None)),a_val])
                 dt = timeseries.time[1]-timeseries.time[0]
  
                 
@@ -1174,7 +1181,7 @@ class SubsurfaceSinks(FugModel):
         return res
     
     def mass_flux(self,res_time,numc):
-        """ This function calculates mass fluxes (g/h) between compartments and
+        """ This function calculates mass fluxes (mol/h) between compartments and
         out of the overall system. Calculations are done at the same discretization 
         level as the system, to get the overall mass fluxes for a compartment use 
         mass_flux.loc[:,'Variable'].groupby(level=[0,1]).sum() (result is in mol/h, multiply by dt for total mass)
@@ -1371,6 +1378,7 @@ class SubsurfaceSinks(FugModel):
                 mbal_cum.loc[:,Mj] = mbal.loc[:,Mj]
             mbal_cum.loc[:,Madvj] = mbal.loc[:,Madvj].groupby(level=0).cumsum()/divisor
             mbal_cum.loc[:,Mrj] = mbal.loc[:,Mrj].groupby(level=0).cumsum()/divisor
+            #pdb.set_trace()
             if j in ['rootbody','rootxylem','rootcyl','shoots']:
                 #Growth dilution processes - in DT but nowhere else.
                 Mgj = "Mg"+str(j)
@@ -1493,7 +1501,10 @@ class SubsurfaceSinks(FugModel):
             ax.annotate(f'{mbal.loc[Mrj]:.2e}',xy = dM_locs[Mrj],fontsize = fontsize, fontweight = 'bold',xycoords='axes fraction')
             if j in ['water']: #Add effluent and exfiltration advection
                 ax.annotate(f'{mbal.loc["Meff"]:.2e}',xy = dM_locs['Meff'],fontsize = fontsize, fontweight = 'bold',xycoords='axes fraction')
-                ax.annotate(f'{mbal.loc["Mexf"]:.2e}',xy = dM_locs['Mexf'],fontsize = fontsize, fontweight = 'bold',xycoords='axes fraction')
+                try:
+                    ax.annotate(f'{mbal.loc["Mexf"]:.2e}',xy = dM_locs['Mexf'],fontsize = fontsize, fontweight = 'bold',xycoords='axes fraction')
+                except KeyError:
+                    pass
                 if 'pond' in numc: #Need to reverse some to display with appropriate conventions.
                     mbal.loc['Mnetwaterpond'] = -mbal.loc['Mnetwaterpond'] 
             elif j in ['subsoil']:#Mass enters the pond.

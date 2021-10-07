@@ -79,6 +79,8 @@ class LomaLoadings(SubsurfaceSinks):
         #With Mixing Wells
         oro_dss = np.array(params.val.sys_ss.split(","),dtype='float') #Subsoil depths from the Oro Loma design drawing. Mixing wells are represented by 3' topsoil depths
         oro_dts = np.array(params.val.sys_ts.split(","),dtype='float') #Topsoil depths. Mixing wells do not have a topsoil layer
+        #Asume minimum topsoil depth
+        #oro_dts[oro_dts==0] = 0.01
         #Without Mixing Wells
         #For topsoil as just surface layer
         #oro_dss = [0.2548, 0.2548, 0.8644, 0.8644, 0.8644, 0.8644, 0.8644, 0.8644,0.8644, 0.8644, 0.8644, 0.712 , 0.712 , 0.712 ]
@@ -208,7 +210,7 @@ class LomaLoadings(SubsurfaceSinks):
         res = res.fillna(0)
         return res
     
-    def LL_fig(self,numc,mass_balance,time=None,compound=None,figname='Model_Figure.tif',dpi=100,fontsize=8,figheight=6,dM_locs=None,M_locs=None):
+    def LL_fig(self,numc,mass_balance,time=None,compound=None,figname='Oro_Model_Figure.tif',dpi=100,fontsize=8,figheight=6,dM_locs=None,M_locs=None):
             """ 
             Show modeled fluxes and mass distributions on a bioretention cell figure. 
             Just a wrapper to give the correct figure to the main function
@@ -218,26 +220,46 @@ class LomaLoadings(SubsurfaceSinks):
                 time (float, optional) = Time to display, in hours. Default will be the last timestep.
                 compounds (str, optional) = Compounds to display. Default is all.
             """
-            pdb.set_trace()
+            #pdb.set_trace()
             try:
                 dM_locs[1]
             except TypeError:
                 #Define locations of the annotations if not give    
-                dM_locs = {'Meff':(0.835,0.215),'Min':(0.013,0.490),'Mexf':(0.581,0.235),'Mrwater':(0.850,0.360),
-                          'Mrsubsoil':(0.82,0.280),'Mrtopsoil':(0.82,0.300),'Mrrootbody':(0.560,0.780),'Mrrootxylem':(0.73,0.835),
-                          'Mrrootcyl':(0.835,0.775),'Mrshoots':(0.135,0.760),'Mrair':(0.025,0.830),
-                          'Mrpond':(0.794,0.560),'Mnetwatersubsoil':(0.046,0.295),'Mnetwatertopsoil':(0.046,0.305),
-                          'Mnetsubsoiltopsoil':(0.679,0.664),'Mnetsubsoilrootbody':(0.679,0.664),
-                          'Mnetsubsoilpond':(0.013,0.390),'Mnettopsoilrootbody':(0.679,0.664),'Mnettopsoilshoots':(0.260,0.387),
-                          'Mnettopsoilair':(0.636,0.545),'Mnetrootbodyrootxylem':(0.835,0.635),'Mnetrootxylemrootcyl':(0.875,0.680),'Mnetrootcylshoots':(0.50,0.443),
-                          'Mnetshootsair':(0.489,0.585),'Mnetairpond':(0.090,0.545),'Madvair':(0.828,0.885),'Madvpond':(0.850,0.475)}
+                dM_locs = {'Meff':(0.835,0.170),'Min':(0.11,0.40),'Mrwater':(0.25,0.18),
+                          'Mrsubsoil':(0.83,0.232),'Mrtopsoil':(0.82,0.37),'Mrrootbody':(0.60,0.745),'Mrrootxylem':(0.73,0.70),
+                          'Mrrootcyl':(0.82,0.745),'Mrshoots':(0.135,0.760),'Mrair':(0.025,0.830),
+                          'Mnetwatersubsoil':(0.28,0.22),'Mnetwatertopsoil':(0.2,0.35),'Mnetsubsoiltopsoil':(0.01,0.36),
+                          'Mnetsubsoilrootbody':(0.63,0.52),'Mnettopsoilrootbody':(0.65,0.58),'Mnettopsoilshoots':(0.25,0.47),
+                          'Mnettopsoilair':(0.029,0.50),'Mnetrootbodyrootxylem':(0.82,0.534),'Mnetrootxylemrootcyl':(0.826,0.584),
+                          'Mnetrootcylshoots':(0.513,0.451),'Mnetshootsair':(0.06,0.601),'Madvair':(0.675,0.975)}
                 #Location of the massess
-                M_locs = {'Mwater':(0.075,0.242),'Msubsoil':(0.075,0.217),'Mtopsoil':(0.075,0.225),'Mrootbody':(0.530,0.930),
-                        'Mrootxylem':(0.747,0.930),'Mrootcyl':(0.747,0.961),'Mshoots':(0.530,0.961),
-                        'Mair':(0.095,0.955)}             
+                M_locs = {'Mwater':(0.61,0.18),'Msubsoil':(0.61,0.22),'Mtopsoil':(0.11,0.40),'Mrootbody':(0.76,0.89),
+                        'Mrootxylem':(0.76,0.845),'Mrootcyl':(0.76,0.80),'Mshoots':(0.76,0.935),
+                        'Mair':(0.11,0.965)}             
             fig,ax = self.model_fig(numc,mass_balance=mass_balance,dM_locs=dM_locs,
                                     M_locs=M_locs,time=time,compound=compound,
                                     figname=figname,dpi=dpi,fontsize=fontsize,
                                     figheight=figheight,)
             return fig,ax    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     
