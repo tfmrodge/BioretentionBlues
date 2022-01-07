@@ -30,13 +30,13 @@ locsumm = pd.read_excel('Kortright_BC.xlsx',index_col = 0)
 locsumm.iloc[:,slice(0,14)] = locsumm.astype('float') #Convert any ints to floats 
 #locsumm = pd.read_excel('Oro_Loma_1.xlsx',index_col = 0) 
 #All chemicals, including OPEs
-#chemsumm = pd.read_excel('Kortright_ALLCHEMSUMM.xlsx',index_col = 0)
+chemsumm = pd.read_excel('Kortright_ALLCHEMSUMM_notrans.xlsx',index_col = 0)
 #Synthetic chemicals for exploring chemical space
 #chemsumm = pd.read_excel('Kortright_KowCHEMSUMM.xlsx',index_col = 0)
 #Not including OPEs
 #chemsumm = pd.read_excel('Kortright_CHEMSUMM.xlsx',index_col = 0)
 #Specific Groups
-chemsumm = pd.read_excel('Kortright_benztrans_CHEMSUMM.xlsx',index_col = 0)
+#chemsumm = pd.read_excel('Kortright_benztrans_CHEMSUMM.xlsx',index_col = 0)
 #chemsumm = pd.read_excel('TPhP_CHEMSUMM.xlsx',index_col = 0)
 #chemsumm = pd.read_excel('Kortright_BRCHEMSUMM.xlsx',index_col = 0)
 #chemsumm = pd.read_excel('Kortright_OPECHEMSUMM.xlsx',index_col = 0)
