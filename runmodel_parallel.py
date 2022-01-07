@@ -45,8 +45,9 @@ def run_BC(modparams):
 params = pd.read_excel('params_BC_5.xlsx',index_col = 0) 
 #params = pd.read_excel('params_BC_highplant.xlsx',index_col = 0)
 locsumm = pd.read_excel('Kortright_BC.xlsx',index_col = 0)
-chemsumm = pd.read_excel('Kortright_KowCHEMSUMM_7.xlsx',index_col = 0)
-#chemsumm = pd.read_excel('Kortright_ALLCHEMSUMM.xlsx',index_col = 0)
+#chemsumm = pd.read_excel('PPD_CHEMSUMM.xlsx',index_col = 0)
+#chemsumm = pd.read_excel('Kortright_KowCHEMSUMM_7.xlsx',index_col = 0)
+chemsumm = pd.read_excel('Kortright_ALLCHEMSUMM_notrans.xlsx',index_col = 0)
 #chemsumm = pd.read_excel('Kortright_benzCHEMSUMM.xlsx',index_col = 0)
 pdb.set_trace()
 #chemsumm.loc[:,'VegHL'] = params.val.VegHL*chemsumm.VegHL
@@ -76,7 +77,33 @@ df_chemspace.loc[:,'soilrxnfrac'] = np.array(mbal_cum.loc[(slice(None),t),'Mrsub
 df_chemspace.loc[:,'vegrxnfrac'] = np.array(mbal_cum.loc[(slice(None),t),['Mrrootbody','Mrrootxylem',
                                                                          'Mrrootcyl','Mrshoots']].sum(axis=1))*100
 '''
+#Graph the outputs
+mass_flux = kortright_BC.mass_flux(res,numc) #Run to get mass flux
+mbal = kortright_BC.mass_balance(res,numc,mass_flux)
+Couts = kortright_BC.conc_out(numc,timeseries,chemsumm,res,mass_flux)
+recovery = mass_flux.N_effluent.groupby(level=0).sum()/mass_flux.N_influent.groupby(level=0).sum()
+#Kling-Gupta Efficiency (modified Nash-Sutcliffe) can be our measure of model performance
+KGE = {}
+pltnames = []
+pltnames.append('time')
+#Calculate performance and define what to plot
+for chem in chemsumm.index:
+    pltnames.append(chem+'_Coutest')
+
+#plot it    
+pltdata = Couts[pltnames]
+pltdata = pltdata.melt('time',var_name = 'Test_vs_est',value_name = 'Cout (mg/L)')
+ylim = [0, 50]
+ylabel = 'Cout (mg/L)'
+xlabel = 'Time'
+#pltdata = res_time #All times at once
+fig = plt.figure(figsize=(14,8))
+ax = sns.lineplot(x = pltdata.time, y = 'Cout (mg/L)', hue = 'Test_vs_est',data = pltdata)
+#ax.set_ylim(ylim)
+ax.set_ylabel(ylabel, fontsize=20)
+ax.set_xlabel(xlabel, fontsize=20)
+ax.tick_params(axis='both', which='major', labelsize=15)
 codetime = (time.time()-start)
 #outpath ='D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/tracer_outs_SUBMISSION20210826.pkl'
-outpath ='D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/tracer_outs_synthetic_7large.pkl'
+outpath ='D:/OneDrive - University of Toronto/University/_Active Projects/Bioretention Blues Model/Model/Pickles/PPD_outs_highway.pkl'
 res.to_pickle(outpath)

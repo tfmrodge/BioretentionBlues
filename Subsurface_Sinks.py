@@ -16,8 +16,11 @@ import pdb #Turn on for error checking
 
 class SubsurfaceSinks(FugModel):
     """ Model of 1D contaminant transport in a vegetated, flowing system.
-    This is a modification of the original BCBlues model to work with a 1D ADRE
-    BCBlues_1d objects have the following properties:
+    This is the main class that will be run to solve the contaminant transport
+    and fate through a vegetated subsurface system. Code here can be used for
+    the BCBlues submodel, which is parameterized to represent a vertically-flowing
+    bioretention cell.
+    SubsurfaceSinks objects have the following properties:
         
     Attributes:
     ----------
@@ -1057,7 +1060,7 @@ class SubsurfaceSinks(FugModel):
         and everything else. Index level 0 = chems, level 1 = time, level 2 = cell number 
         """
         #pdb.set_trace()
-        try: #See if there is a compartment index in the timeseries
+        try: #See if there is a compartment index in the input_calcs
             input_calcs.index.levels[2]
         except AttributeError: #Runs the full flow_time calcs
             input_calcs = self.input_calc(locsumm,chemsumm,params,pp,numc,timeseries)

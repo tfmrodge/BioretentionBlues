@@ -23,12 +23,11 @@ import sys
 #import xarray as xr #cite as https://openresearchsoftware.metajnl.com/articles/10.5334/jors.148/
 
 class FugModel(metaclass=ABCMeta):
-    """ Fugacity model object, as described by Mackay (2001). This class will
-    contain fugacity models, such as ppLFERMUM (Rodgers et al., 2018), the Multimedia 
-    Indoor Model (), and the Bioretention Cell Blues (BCBlues Rodgers et al., unpublished).
+    """ Fugacity model object, as described by Mackay (2001). This class 
+    contains fugacity models, such as ppLFERMUM (Rodgers et al., 2018),
+    and the Bioretention Cell Blues (BCBlues Rodgers et al., unpublished).
     The FugModel object is itself an abstract base class (ABC) and so cannot be
     instantiated by itself. The input_calcs abstractmethod needs to be defined for each model.
-    Fugacity models have a number of shared attributes and methods, as defined below.
         
     Attributes:
     ----------
@@ -50,9 +49,8 @@ class FugModel(metaclass=ABCMeta):
             
     Sub-Classes:
     ----------
-
-            ppLFERMUM - ppLFERMUM of Rodgers et al. (2018) based on MUM of Diamond et al (2001)
-            MICS - multimedia chemical screening of Kvasnicka (in prep) based on ICECRM (Zhang, 2014) & agent based model (2018)
+            SubsurfaceSinks - Activity based level V multimedia model of 
+            contaminant transport and fate in a bioretention cell. 
             BCBlues - BioretentionCell Blues model of Rodgers et al. (in prep)
             
     """ 
